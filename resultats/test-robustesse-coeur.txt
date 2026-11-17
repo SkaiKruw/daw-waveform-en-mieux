@@ -1,0 +1,13 @@
+
+Résultats (1200 blocs, 5.3 ms par bloc)
+  Piste gain   : 1200 blocs ok, 0 manqués, pire aller-retour 0.332 ms
+  Piste synthé : planté au bloc 300 (Segmentation fault), relancé au bloc 400, 300 blocs audibles ensuite, 1 redémarrage(s)
+  Piste bloquée: détectée au bloc 507 (ne répond plus (bloqué), processus arrêté)
+
+  ok     : la piste saine rend le bon signal sur au moins 99,5 % des blocs, malgré les deux pannes
+  ok     : le plantage est détecté en moins de 3 blocs (< 16 ms)
+  ok     : après « Relancer », le synthé produit à nouveau du son
+  ok     : un plugin bloqué est arrêté en moins de 10 blocs
+  ok     : la piste bloquée reste en sourdine
+
+TOUS LES TESTS PASSENT — l'hôte a survécu.

@@ -1,0 +1,26 @@
+add_library(onde_sandbox STATIC src/PluginSandbox.cpp src/Platform.cpp src/WorkerChannel.cpp src/WorkerPlugins.cpp)
+target_include_directories(onde_sandbox PUBLIC include PRIVATE src)
+target_compile_features(onde_sandbox PUBLIC cxx_std_20)
+
+add_executable(onde-plugin-worker src/WorkerMain.cpp src/WorkerPlugins.cpp src/Platform.cpp src/WorkerChannel.cpp)
+target_include_directories(onde-plugin-worker PRIVATE include src)
+target_compile_features(onde-plugin-worker PRIVATE cxx_std_20)
+
+if(WIN32)
+    target_link_libraries(onde_sandbox PUBLIC winmm avrt)
+    target_link_libraries(onde-plugin-worker PRIVATE avrt winmm)
+    if(MINGW)
+        # Exécutables autonomes : pas de DLL MinGW à fournir à côté.
+        target_link_options(onde-plugin-worker PRIVATE -static)
+    endif()
+else()
+    target_link_libraries(onde_sandbox PUBLIC pthread rt)
+    target_link_libraries(onde-plugin-worker PRIVATE pthread rt)
+endif()
+
+add_executable(onde-sandbox-test tests/SandboxTest.cpp)
+target_link_libraries(onde-sandbox-test PRIVATE onde_sandbox)
+if(MINGW)
+    target_link_options(onde-sandbox-test PRIVATE -static)
+endif()
+add_dependencies(onde-sandbox-test onde-plugin-worker)

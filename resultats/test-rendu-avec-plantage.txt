@@ -1,0 +1,20 @@
+Rendu hors ligne, 8 mesures à 92 BPM, 48 kHz — le synthé isolé plante au début de la mesure 5 (10.43 s)
+
+Mesure | Mix sans plantage | Mix avec plantage | Pad seul sans | Pad seul avec
+   1   |      0.1714       |      0.1714       |    0.0264     |    0.0264
+   2   |      0.1714       |      0.1689       |    0.0229     |    0.0229
+   3   |      0.1694       |      0.1694       |    0.0175     |    0.0175
+   4   |      0.1707       |      0.1707       |    0.0274     |    0.0274
+   5   |      0.1703       |      0.1684       |    0.0200     |    0.0000
+   6   |      0.1695       |      0.1685       |    0.0205     |    0.0000
+   7   |      0.1706       |      0.1685       |    0.0267     |    0.0000
+   8   |      0.1696       |      0.1684       |    0.0198     |    0.0000
+
+  ok     : les 4 rendus vont jusqu'au bout : l'hôte n'a jamais planté
+  ok     : dans le rendu avec plantage, le processus du synthé a bien planté (SIGSEGV)
+  ok     : mesures 1 à 4 : le synthé joue à l'identique avant le plantage
+  ok     : mesures 5 à 8 : le synthé est silencieux après le plantage (sa piste seule se tait)
+  ok     : mesures 5 à 8 : batterie et basse continuent dans le mix
+  info   : 1025 blocs traités par le synthé avant le plantage, 980 blocs remplacés par du silence
+
+RENDU OK — un plugin qui plante ne coupe que sa piste.

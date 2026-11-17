@@ -1,0 +1,31 @@
+# Compilation (recréée par windows/installer-et-lancer.ps1)
+/build*/
+/out/
+*.log
+
+# Dépendances téléchargées par le script : Tracktion Engine + JUCE, demucs.cpp (Eigen), modèles Demucs (≈ 340 Mo)
+/deps/
+
+# Binaires compilés (ne jamais versionner d'exécutables)
+*.exe
+*.dll
+*.pdb
+*.obj
+*.lib
+*.ilk
+*.vst3
+/windows/test-isolation-immediat/
+
+# Projets et rendus de test
+*.onde
+*.onde.bak
+Séparations/
+
+# Éditeurs et système
+.vs/
+.vscode/
+.idea/
+*.user
+Thumbs.db
+desktop.ini
+.DS_Store
