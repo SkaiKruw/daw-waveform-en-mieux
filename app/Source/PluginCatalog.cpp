@@ -1,4 +1,5 @@
 #include "PluginCatalog.h"
+#include "OndeEffects.h"
 #include "SandboxPlugin.h"
 
 PluginCatalog::PluginCatalog() : juce::Thread ("Analyse des plugins")
@@ -26,6 +27,10 @@ juce::Array<PluginEntry> PluginCatalog::getBuiltIns (bool instruments) const
     }
     else
     {
+        // Effets Onde (fenêtres dédiées), puis effets de base de Tracktion.
+        add ("Onde EQ (égaliseur paramétrique, analyseur)", ondefx::EqPlugin::xmlTypeName, false);       r.getReference (r.size() - 1).manufacturer = "Onde";
+        add ("Onde Comp (compresseur)", ondefx::CompPlugin::xmlTypeName, false);                         r.getReference (r.size() - 1).manufacturer = "Onde";
+        add ("Onde Limiteur (plafond garanti)", ondefx::LimiterPlugin::xmlTypeName, false);              r.getReference (r.size() - 1).manufacturer = "Onde";
         add ("Égaliseur 4 bandes", te::EqualiserPlugin::xmlTypeName, false);
         add ("Compresseur", te::CompressorPlugin::xmlTypeName, false);
         add ("Réverbération", te::ReverbPlugin::xmlTypeName, false);

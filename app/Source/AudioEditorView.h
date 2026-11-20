@@ -40,6 +40,7 @@ private:
     float lastCursorX = -1.0f;
     int tick = 0;
     double lastViewStart = -1.0, lastViewLength = -1.0;
+    int titleW = 290;                    // largeur du titre de la barre (adaptée à la place disponible)
     te::EditItemID lastFramed;
     void timerCallback() override;
     void changeListenerCallback (juce::ChangeBroadcaster*) override;

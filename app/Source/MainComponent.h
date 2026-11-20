@@ -13,6 +13,7 @@
 #include "AboutPanel.h"
 #include "HubPanel.h"
 #include "HistoryPanel.h"
+#include "OndeEffects.h"
 #include "CommandPalette.h"
 #include "Panels.h"
 
@@ -137,6 +138,7 @@ private:
     RemoteControl remote { ctx };                       // télécommande depuis un téléphone
     juce::Component::SafePointer<juce::DialogWindow> remoteWindow;
     juce::Component::SafePointer<juce::DialogWindow> hubWindow, historyWindow;
+    std::map<juce::String, juce::Component::SafePointer<juce::DialogWindow>> effectWindows;   // fenêtres des effets Onde
     juce::String status;
     juce::String paintedStatus;
     int statusTick = 0;

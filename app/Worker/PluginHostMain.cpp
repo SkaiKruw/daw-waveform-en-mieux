@@ -177,7 +177,10 @@ private:
 
         copyText (b.pluginName, sizeof (b.pluginName), desc->name);
         b.isInstrument = desc->isInstrument ? 1u : 0u;
-        b.hasEditor = instance->hasEditor() ? 1u : 0u;
+        // Pas de hasEditor() ici : pour un VST3, il crée la vue du plugin pour vérifier qu'elle existe, et certains
+        // plugins (Neural DSP…) attendent alors indéfiniment un événement d'interface que la boucle de messages,
+        // pas encore lancée, ne délivre jamais. La fenêtre est créée à la demande (showEditor).
+        b.hasEditor = 1u;
         return true;
     }
 
@@ -245,18 +248,21 @@ private:
         {
             case Command::none: break;
             case Command::showEditor:
-                if (instance != nullptr && instance->hasEditor())
+            {
+                juce::AudioProcessorEditor* ed = nullptr;
+                if (instance != nullptr && window == nullptr) ed = instance->createEditorIfNeeded();
+                if (window == nullptr && ed != nullptr)
+                    window = std::make_unique<EditorWindow> (instance->getName() + juce::String::fromUTF8 (" — isolé par Onde"), ed, b.editorVisible);
+                if (window != nullptr)
                 {
-                    if (window == nullptr)
-                        window = std::make_unique<EditorWindow> (instance->getName() + juce::String::fromUTF8 (" — isolé par Onde"),
-                                                                 instance->createEditorIfNeeded(), b.editorVisible);
                     window->setVisible (true);
                     window->toFront (true);
                     b.editorVisible.store (1);
                     channel.commandDone (true);
                 }
-                else channel.commandDone (false);
+                else { b.hasEditor = 0u; channel.commandDone (false); }   // pas d'interface : on le saura désormais
                 break;
+            }
             case Command::hideEditor:
                 if (window) window->setVisible (false);
                 b.editorVisible.store (0);

@@ -256,16 +256,23 @@ double AudioEditorView::xToFileTime (float x) const
 
 void AudioEditorView::resized()
 {
+    // Barre adaptative : libellés longs sur un grand écran, courts sinon (le sens complet reste dans
+    // les infobulles) ; aucun bouton ne doit sortir de la fenêtre.
     auto t = getLocalBounds().removeFromTop (toolbarH).reduced (8, 5);
-    t.removeFromLeft (290);
-    gainLabel.setBounds (t.removeFromLeft (92)); gain.setBounds (t.removeFromLeft (120)); t.removeFromLeft (8);
-    normaliseBtn.setBounds (t.removeFromLeft (90)); t.removeFromLeft (14);
-    pitchLabel.setBounds (t.removeFromLeft (78)); pitch.setBounds (t.removeFromLeft (110)); t.removeFromLeft (8);
-    reverseBtn.setBounds (t.removeFromLeft (80)); t.removeFromLeft (14);
-    trimBtn.setBounds (t.removeFromLeft (150)); t.removeFromLeft (4);
-    deleteBtn.setBounds (t.removeFromLeft (160)); t.removeFromLeft (14);
-    fitBtn.setBounds (t.removeFromLeft (80)); t.removeFromLeft (14);
-    bounceBtn.setBounds (t.removeFromLeft (120));
+    const bool roomy = t.getWidth() >= 1330;
+    trimBtn.setButtonText (roomy ? U ("Rogner à la sélection") : U ("Rogner"));
+    deleteBtn.setButtonText (roomy ? U ("Supprimer la sélection") : U ("Retirer"));
+    titleW = roomy ? 290 : 170;
+    t.removeFromLeft (titleW);
+    const int sliderW = roomy ? 120 : 84;
+    gainLabel.setBounds (t.removeFromLeft (88)); gain.setBounds (t.removeFromLeft (sliderW)); t.removeFromLeft (6);
+    normaliseBtn.setBounds (t.removeFromLeft (84)); t.removeFromLeft (roomy ? 14 : 8);
+    pitchLabel.setBounds (t.removeFromLeft (74)); pitch.setBounds (t.removeFromLeft (sliderW)); t.removeFromLeft (6);
+    reverseBtn.setBounds (t.removeFromLeft (70)); t.removeFromLeft (roomy ? 14 : 8);
+    trimBtn.setBounds (t.removeFromLeft (roomy ? 150 : 66)); t.removeFromLeft (4);
+    deleteBtn.setBounds (t.removeFromLeft (roomy ? 160 : 66)); t.removeFromLeft (roomy ? 14 : 8);
+    fitBtn.setBounds (t.removeFromLeft (70)); t.removeFromLeft (roomy ? 14 : 8);
+    bounceBtn.setBounds (t.removeFromLeft (116));
 }
 
 te::WaveAudioClip* AudioEditorView::bounce (EditContext& ctx, te::WaveAudioClip& c, juce::String& error)
@@ -329,10 +336,11 @@ void AudioEditorView::paint (juce::Graphics& g)
     g.fillRect (bar);
     g.setColour (theme::line); g.drawHorizontalLine (toolbarH - 1, 0.0f, (float) getWidth());
     g.setColour (theme::text); g.setFont (theme::ui (13.0f, true));
-    g.drawText (c ? c->getName() : U ("Éditeur audio"), 10, 0, 150, toolbarH, juce::Justification::centredLeft, true);
+    const int nameW = titleW * 52 / 100;
+    g.drawText (c ? c->getName() : U ("Éditeur audio"), 10, 0, nameW - 6, toolbarH, juce::Justification::centredLeft, true);
     g.setColour (theme::muted); g.setFont (theme::ui (11.5f));
     g.drawText (c ? (c->getTrack()->getName() + U ("  ·  ") + shownFile.getFileName()) : U ("Aucun événement audio sélectionné"),
-                150, 0, 140, toolbarH, juce::Justification::centredLeft, true);
+                nameW + 4, 0, titleW - nameW - 4, toolbarH, juce::Justification::centredLeft, true);
 
     auto area = waveArea();
     if (c == nullptr || ! shownFile.existsAsFile())

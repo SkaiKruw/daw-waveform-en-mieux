@@ -9,6 +9,7 @@
 #include "StudioLookAndFeel.h"
 #include "Exporter.h"
 #include "Profiler.h"
+#include "OndeEffects.h"
 
 namespace
 {
@@ -339,6 +340,7 @@ public:
         tooltips = std::make_unique<juce::TooltipWindow> (nullptr, 600);
         engine = std::make_unique<te::Engine> ("Onde", std::make_unique<OndeUIBehaviour>(), nullptr);
         engine->getPluginManager().createBuiltInType<SandboxPlugin>();
+        ondefx::registerTypes (*engine);          // effets intégrés d'Onde (EQ, Comp, Limiteur)
         catalog = std::make_unique<PluginCatalog>();
 
         if (args[0] == "--render-test")
@@ -560,11 +562,19 @@ private:
                 rp.time = { te::TimePosition(), te::TimePosition::fromSeconds (len) };
                 rp.usePlugins = true; rp.tracksToDo = te::toBitSet (te::getAllTracks (*edit));
                 wav.deleteFile();
-                if (inst && sp != nullptr)
+                if (sp != nullptr)
                 {
-                    // Les échantillonneurs chargent leurs sons en arrière-plan : on leur laisse le temps.
+                    // Certains plugins (amplis à modèles, échantillonneurs) mettent longtemps à se charger :
+                    // on attend que le processus isolé soit prêt (60 s au plus) avant de rendre.
                     sp->initialise ({ te::TimePosition(), 48000.0, 512 });
-                    pump (8000);
+                    const auto loadStart = juce::Time::getMillisecondCounter();
+                    const juce::uint32 maxWait = (juce::uint32) juce::jmax (60000, juce::SystemStats::getEnvironmentVariable ("ONDE_PLUGIN_WAIT_MS", "0").getIntValue());
+                    while (juce::Time::getMillisecondCounter() - loadStart < maxWait
+                           && (sp->getSandbox() == nullptr || sp->getSandbox()->getState() == onde::PluginSandbox::State::starting))
+                        pump (100);
+                    std::printf ("  info   : %s prêt en %u ms (état : %s)\n", e.name.toRawUTF8(), juce::Time::getMillisecondCounter() - loadStart,
+                                 sp->getSandbox() ? onde::toString (sp->getSandbox()->getState()) : "aucun");
+                    if (inst) pump (8000);    // échantillonneurs : sons chargés en arrière-plan
                 }
                 trace ("plugin : rendu");
                 const bool rendered = te::Renderer::renderToFile ("Test plugin", rp).existsAsFile();
@@ -915,7 +925,8 @@ private:
 
         // Effets intégrés + VST3 isolé ajoutés à une piste.
         ctx.selectTrack (inst);
-        auto rev = catalog->getBuiltIns (false)[2];
+        PluginEntry rev;
+        for (auto& e : catalog->getBuiltIns (false)) if (e.builtInType == te::ReverbPlugin::xmlTypeName) rev = e;
         PluginCatalog::addToTrack (*inst, rev);
         bool hasReverb = false; for (auto p : inst->pluginList.getPlugins()) hasReverb |= dynamic_cast<te::ReverbPlugin*> (p) != nullptr;
         check (hasReverb, U ("un effet intégré (réverbération) s'ajoute avant le volume"));
@@ -1185,6 +1196,15 @@ private:
                 {
                     w2->setFadeIn (te::TimeDuration::fromSeconds (bar)); w2->setFadeOut (te::TimeDuration::fromSeconds (bar * 0.5)); w2->setGainDB (-3.0f);
                     pump (600); snapshot (*mc, dir.getChildFile ("10-editeur-audio.png"));
+                    if (auto* ae = mc->getAudioEditor())
+                    {
+                        // Aucun bouton de la barre ne doit sortir de l'éditeur (largeur de la fenêtre de test).
+                        juce::StringArray outside;
+                        for (auto* child : ae->getChildren())
+                            if (child->isVisible() && child->getRight() > ae->getWidth()) outside.add (child->getTitle().isNotEmpty() ? child->getTitle() : child->getName());
+                        if (auto* b = dynamic_cast<juce::Button*> (ae->getChildren().getLast())) juce::ignoreUnused (b);
+                        check (outside.isEmpty(), U ("éditeur audio : tous les boutons tiennent dans la largeur (") + juce::String (ae->getWidth()) + " px) " + outside.joinIntoString (", "));
+                    }
                     w2->setFadeIn ({}); w2->setFadeOut ({}); w2->setGainDB (0.0f);
                 }
                 mc->showView (0);
@@ -1561,6 +1581,117 @@ private:
                 for (auto* c : target->getClips())
                     if (auto* ow = dynamic_cast<te::WaveAudioClip*> (c)) restored = restored || (ow->getIsReversed() && std::abs (ow->getGainDB() + 6.0f) < 0.01f);
                 check (restored, U ("« Annuler » rend l'événement d'origine et ses réglages"));
+            }
+        }
+
+        // Effets Onde : mesures sur des sinus (100 Hz, 1 kHz, 8 kHz).
+        {
+            auto& ed = *mc->getEdit();
+            auto& c4 = mc->getContext();
+            const double fs = 48000.0;
+            const int len = (int) (fs * 4.0);
+            auto writeTones = [&] (const juce::File& f, std::initializer_list<std::pair<double, float>> tones)
+            {
+                juce::AudioBuffer<float> b (2, len); b.clear();
+                for (auto [hzv, amp] : tones)
+                    for (int i = 0; i < len; ++i)
+                    {
+                        const float v = amp * (float) std::sin (juce::MathConstants<double>::twoPi * hzv * i / fs);
+                        b.addSample (0, i, v); b.addSample (1, i, v);
+                    }
+                f.deleteFile();
+                std::unique_ptr<juce::OutputStream> os (f.createOutputStream());
+                juce::WavAudioFormat wav;
+                if (auto w = std::unique_ptr<juce::AudioFormatWriter> (wav.createWriterFor (os.get(), fs, 2, 32, {}, 0))) { os.release(); w->writeFromAudioSampleBuffer (b, 0, len); }
+            };
+            // Amplitude d'une sinusoïde (Goertzel) sur la seconde 2 à 3 du rendu.
+            auto toneDb = [] (const juce::AudioBuffer<float>& b, double rate, double hzv)
+            {
+                const int s0 = (int) (rate * 2.0), n = (int) rate;
+                if (b.getNumSamples() < s0 + n) return -200.0;
+                const double w = juce::MathConstants<double>::twoPi * hzv / rate, coeff = 2.0 * std::cos (w);
+                double q1 = 0, q2 = 0;
+                for (int i = 0; i < n; ++i) { const double q0 = coeff * q1 - q2 + b.getSample (0, s0 + i); q2 = q1; q1 = q0; }
+                const double mag = std::sqrt (q1 * q1 + q2 * q2 - q1 * q2 * coeff) * 2.0 / n;
+                return 20.0 * std::log10 (std::max (1e-10, mag));
+            };
+            auto peakDb = [] (const juce::AudioBuffer<float>& b) { return juce::Decibels::gainToDecibels (b.getMagnitude (0, 0, b.getNumSamples()), -200.0f); };
+            const auto tones = dir.getChildFile ("sinus-3.wav"), loud = dir.getChildFile ("sinus-fort.wav");
+            writeTones (tones, { { 100.0, 0.2f }, { 1000.0, 0.2f }, { 8000.0, 0.2f } });
+            writeTones (loud, { { 1000.0, 0.5f } });   // -6 dBFS
+
+            auto* t = c4.addAudioTrack();
+            t->setName ("Test effets");
+            t->insertWaveClip ("sinus", tones, { { te::TimePosition(), te::TimePosition::fromSeconds (4.0) }, te::TimeDuration() }, false);
+            auto renderTrack = [&] (const char* name) { double r = 0; const auto f = dir.getChildFile (juce::String (name) + ".wav"); renderEdit (ed, f, { t }); return readAll (f, r); };
+
+            auto eqPtr = ed.getPluginCache().createNewPlugin (ondefx::EqPlugin::xmlTypeName, {});
+            t->pluginList.insertPlugin (eqPtr, 0, nullptr);
+            auto* eq = dynamic_cast<ondefx::EqPlugin*> (eqPtr.get());
+            check (eq != nullptr, U ("« Onde EQ » inséré sur une piste"));
+            if (eq != nullptr)
+            {
+                const auto flat = renderTrack ("eq-neutre");
+                eq->param (ondefx::EqPlugin::bandId (3, "gain"))->setParameter (12.0f, juce::sendNotification);
+                const auto boosted = renderTrack ("eq-cloche");
+                const double d100 = toneDb (boosted, 48000, 100) - toneDb (flat, 48000, 100);
+                const double d1k = toneDb (boosted, 48000, 1000) - toneDb (flat, 48000, 1000);
+                const double d8k = toneDb (boosted, 48000, 8000) - toneDb (flat, 48000, 8000);
+                check (std::abs (d1k - 12.0) < 0.5 && std::abs (d100) < 1.0 && std::abs (d8k) < 1.0,
+                       U ("Onde EQ : cloche +12 dB à 1 kHz → ") + juce::String (d1k, 2) + U (" dB (100 Hz ") + juce::String (d100, 2) + U (", 8 kHz ") + juce::String (d8k, 2) + ")");
+                eq->param (ondefx::EqPlugin::bandId (3, "gain"))->setParameter (0.0f, juce::sendNotification);
+                eq->param (ondefx::EqPlugin::bandId (0, "on"))->setParameter (1.0f, juce::sendNotification);
+                eq->param (ondefx::EqPlugin::bandId (0, "freq"))->setParameter (1000.0f, juce::sendNotification);
+                const auto cut = renderTrack ("eq-coupe-bas");
+                const double c100 = toneDb (cut, 48000, 100) - toneDb (flat, 48000, 100), c8k = toneDb (cut, 48000, 8000) - toneDb (flat, 48000, 8000);
+                check (c100 < -60.0 && std::abs (c8k) < 0.5, U ("Onde EQ : coupe-bas 24 dB/oct à 1 kHz → 100 Hz ") + juce::String (c100, 1) + U (" dB, 8 kHz ") + juce::String (c8k, 2) + " dB");
+                eq->param (ondefx::EqPlugin::bandId (0, "on"))->setParameter (0.0f, juce::sendNotification);
+                if (auto e = ondefx::createEditor (*eq)) { pump (300); snapshot (*e, dir.getChildFile ("14-onde-eq.png")); }
+                // Les réglages sont enregistrés avec le projet.
+                eq->param (ondefx::EqPlugin::bandId (2, "gain"))->setParameter (-5.5f, juce::sendNotification);
+                const auto saved = dir.getChildFile ("effets.onde");
+                bool kept = false;
+                if (mc->saveProjectTo (saved))
+                    if (auto reopened = MainComponent::loadProject (*engine, saved))
+                    {
+                        for (auto* rt : te::getAudioTracks (*reopened))
+                            for (auto* rp : rt->pluginList)
+                                if (auto* re = dynamic_cast<ondefx::EqPlugin*> (rp)) kept = std::abs (re->value (ondefx::EqPlugin::bandId (2, "gain")) + 5.5f) < 0.01f;
+                        EditContext::destroyEdit (reopened);
+                    }
+                check (kept, U ("les réglages d'Onde EQ sont enregistrés avec le projet"));
+                eqPtr->deleteFromParent();
+            }
+
+            // Compresseur : -6 dBFS, seuil -24, taux 4, genou 0 → -24 + 18/4 = -19,5 dBFS en régime établi.
+            for (auto* c : t->getClips()) c->removeFromParent();
+            t->insertWaveClip ("fort", loud, { { te::TimePosition(), te::TimePosition::fromSeconds (4.0) }, te::TimeDuration() }, false);
+            auto compPtr = ed.getPluginCache().createNewPlugin (ondefx::CompPlugin::xmlTypeName, {});
+            t->pluginList.insertPlugin (compPtr, 0, nullptr);
+            if (auto* comp = dynamic_cast<ondefx::CompPlugin*> (compPtr.get()))
+            {
+                comp->param ("threshold")->setParameter (-24.0f, juce::sendNotification);
+                comp->param ("ratio")->setParameter (4.0f, juce::sendNotification);
+                comp->param ("knee")->setParameter (0.0f, juce::sendNotification);
+                const auto out = renderTrack ("comp");
+                const double level = toneDb (out, 48000, 1000);
+                check (std::abs (level + 19.5) < 1.0, U ("Onde Comp : -6 dBFS, seuil -24, taux 4:1 → ") + juce::String (level, 2) + U (" dBFS (attendu -19,5)"));
+                if (auto e = ondefx::createEditor (*comp)) { pump (200); snapshot (*e, dir.getChildFile ("15-onde-comp.png")); }
+                compPtr->deleteFromParent();
+            }
+            // Limiteur : +12 dB d'entrée sur -6 dBFS (soit +6), plafond -1 → aucune crête au-dessus de -1 dBFS.
+            auto limPtr = ed.getPluginCache().createNewPlugin (ondefx::LimiterPlugin::xmlTypeName, {});
+            t->pluginList.insertPlugin (limPtr, 0, nullptr);
+            if (auto* lim = dynamic_cast<ondefx::LimiterPlugin*> (limPtr.get()))
+            {
+                lim->param ("input")->setParameter (12.0f, juce::sendNotification);
+                lim->param ("ceiling")->setParameter (-1.0f, juce::sendNotification);
+                const auto out = renderTrack ("limiteur");
+                const float pk = peakDb (out);
+                check (pk <= -0.99f && pk > -1.5f && std::abs (lim->getLatencySeconds() * 1000.0 - 1.5) < 0.1,
+                       U ("Onde Limiteur : entrée +6 dBFS, plafond -1 → crête ") + juce::String (pk, 2) + U (" dBFS, latence ") + juce::String (lim->getLatencySeconds() * 1000.0, 2) + " ms");
+                if (auto e = ondefx::createEditor (*lim)) { pump (200); snapshot (*e, dir.getChildFile ("16-onde-limiteur.png")); }
+                limPtr->deleteFromParent();
             }
         }
 

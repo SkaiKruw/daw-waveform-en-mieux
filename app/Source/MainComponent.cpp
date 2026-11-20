@@ -110,6 +110,7 @@ MainComponent::~MainComponent()
     if (remoteWindow != nullptr) delete remoteWindow.getComponent();
     if (hubWindow != nullptr) delete hubWindow.getComponent();
     if (historyWindow != nullptr) delete historyWindow.getComponent();
+    for (auto& [id, w] : effectWindows) if (w != nullptr) delete w.getComponent();
     remote.stop();
     juce::Desktop::getInstance().removeFocusChangeListener (this);
     catalog.removeChangeListener (this);
@@ -974,6 +975,22 @@ void MainComponent::openPluginEditor (te::Plugin& p, juce::Component* target)
         if (sp->isFailed()) { setStatus (U ("Ce plugin est arrêté : relancez-le d'abord")); return; }
         if (sp->hasEditor()) { sp->showEditor(); setStatus (U ("Fenêtre de « ") + p.getName() + U (" » ouverte (dans son processus isolé)")); }
         else setStatus (U ("« ") + p.getName() + U (" » n'a pas de fenêtre de réglages"));
+        return;
+    }
+    // Effets Onde : fenêtre dédiée (une seule par effet, ramenée au premier plan si déjà ouverte).
+    if (auto editor = ondefx::createEditor (p))
+    {
+        auto& slot = effectWindows[p.itemID.toString()];
+        if (slot != nullptr) { slot->toFront (true); return; }
+        juce::DialogWindow::LaunchOptions o;
+        o.content.setOwned (editor.release());
+        auto* track = p.getOwnerTrack();
+        o.dialogTitle = p.getName() + (track != nullptr ? U (" — ") + track->getName() : juce::String());
+        o.dialogBackgroundColour = juce::Colour (0xff17191d);
+        o.escapeKeyTriggersCloseButton = true;
+        o.useNativeTitleBar = true;
+        o.resizable = false;
+        slot = o.launchAsync();
         return;
     }
     auto ed = std::make_unique<ParamEditor> (p);

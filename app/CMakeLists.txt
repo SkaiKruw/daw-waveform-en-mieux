@@ -13,6 +13,9 @@ target_sources(onde-plugin-host PRIVATE Worker/PluginHostMain.cpp)
 target_compile_definitions(onde-plugin-host PRIVATE ${ONDE_JUCE_DEFS})
 target_compile_features(onde-plugin-host PRIVATE cxx_std_20)
 target_link_libraries(onde-plugin-host PRIVATE onde_sandbox juce::juce_audio_processors juce::juce_audio_utils juce::juce_recommended_config_flags)
+if(MSVC)
+    target_link_options(onde-plugin-host PRIVATE /DEBUG /OPT:REF /OPT:ICF)   # noms de fonctions pour les diagnostics
+endif()
 
 # --- Application ------------------------------------------------------------------------
 juce_add_gui_app(Onde
@@ -28,7 +31,8 @@ target_sources(Onde PRIVATE
     Source/Main.cpp Source/MainComponent.cpp Source/SandboxPlugin.cpp Source/DemoContent.cpp
     Source/EditContext.cpp Source/PluginCatalog.cpp Source/ArrangementView.cpp Source/MixerView.cpp
     Source/PianoRollView.cpp Source/CommandPalette.cpp Source/Panels.cpp Source/AudioEditorView.cpp Source/Exporter.cpp Source/StemSeparator.cpp
-    Source/QrCode.cpp Source/RemoteControl.cpp Source/RemotePanel.cpp Source/Logo.cpp Source/AboutPanel.cpp Source/HubPanel.cpp Source/HistoryPanel.cpp)
+    Source/QrCode.cpp Source/RemoteControl.cpp Source/RemotePanel.cpp Source/Logo.cpp Source/AboutPanel.cpp Source/HubPanel.cpp Source/HistoryPanel.cpp
+    Source/OndeEffects.cpp Source/OndeEffectEditors.cpp)
 target_compile_definitions(Onde PRIVATE ${ONDE_JUCE_DEFS})
 if(MSVC)
     # Symboles publics (noms de fonctions) pour les diagnostics, sans changer le code généré.
@@ -36,7 +40,7 @@ if(MSVC)
 endif()
 target_link_libraries(Onde PRIVATE
     onde_sandbox OndeData tracktion::tracktion_core tracktion::tracktion_engine tracktion::tracktion_graph
-    juce::juce_audio_devices juce::juce_audio_processors juce::juce_audio_utils juce::juce_recommended_config_flags)
+    juce::juce_audio_devices juce::juce_audio_processors juce::juce_audio_utils juce::juce_dsp juce::juce_recommended_config_flags)
 if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
     target_link_libraries(Onde PRIVATE "-latomic")
 endif()
