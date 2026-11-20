@@ -421,12 +421,13 @@ public:
                 g.fillRect (x1 - fo - 3.0f, top, 6.0f, 6.0f);
             }
             if (sel) g.fillRect ((x0 + x1) * 0.5f - 3.0f, top, 6.0f, 6.0f);   // poignée de gain
-            if (std::abs (w->getGainDB()) > 0.05f || w->getIsReversed() || std::abs (w->getPitchChange()) > 0.01f)
+            if (std::abs (w->getGainDB()) > 0.05f || w->getIsReversed() || std::abs (w->getPitchChange()) > 0.01f || w->getAutoTempo())
             {
                 juce::String tag;
                 if (std::abs (w->getGainDB()) > 0.05f) tag << (w->getGainDB() > 0 ? "+" : "") << juce::String (w->getGainDB(), 1) << " dB  ";
                 if (std::abs (w->getPitchChange()) > 0.01f) tag << (w->getPitchChange() > 0 ? "+" : "") << juce::roundToInt (w->getPitchChange()) << " dt  ";
                 if (w->getIsReversed()) tag << U ("inversé");
+                if (w->getAutoTempo()) tag << U ("  ♪ musical");
                 g.setColour (juce::Colour (0xff0e0f11)); g.setFont (theme::ui (10.0f, true));
                 g.drawText (tag.trim(), juce::Rectangle<float> (x0, top, juce::jmax (0.0f, x1 - x0 - 6.0f), 14.0f), juce::Justification::centredRight, false);
             }
@@ -897,7 +898,7 @@ public:
             if (r >= 100 && r - 100 < folders.size())
             {
                 um.beginNewTransaction (U ("Ranger dans le dossier"));
-                ctx.collapsedFolders.erase (folders[r - 100]->itemID.toString());
+                EditContext::expand (*folders[r - 100]);
                 ctx.moveTrackIntoFolder (track, *folders[r - 100]);
             }
         });
@@ -914,6 +915,8 @@ public:
         else
         {
             m.addItem (9, U ("Ouvrir l'éditeur audio  (Ctrl+E)"));
+            if (auto* w = dynamic_cast<te::WaveAudioClip*> (&clip))
+                m.addItem (11, U ("Mode musical : suit le tempo  (Ctrl+Maj+M)"), true, w->getAutoTempo());
             m.addItem (10, U ("Séparer les sources (voix, batterie, basse, autres)…  (Ctrl+Maj+U)"));
             m.addSeparator();
         }
@@ -928,8 +931,8 @@ public:
         {
             if (r >= 100) { ctx.setTool ((Tool) (r - 100)); return; }
             const char* ids[] = { "", "midi.editor", "clip.quantise", "clip.split", "clip.glue", "clip.duplicate", "clip.mute", "transport.locators", "clip.delete",
-                                  "midi.editor", "audio.separate" };
-            if (r > 0 && r < 11) ctx.perform (ids[r]);
+                                  "midi.editor", "audio.separate", "audio.musical" };
+            if (r > 0 && r < 12) ctx.perform (ids[r]);
         });
     }
 
@@ -1102,7 +1105,7 @@ public:
             // Nouveau tempo sur le temps le plus proche (ou la grille si l'aimant est actif).
             const double step = ctx.snapOn ? juce::jmax (1.0, ctx.gridBeats) : 1.0;
             const double beat = std::round (ctx.toBeats (owner.xToTime ((float) e.x)) / step) * step;
-            ts.insertTempo (te::BeatPosition::fromBeats (juce::jmax (0.0, beat)), std::round (yToBpm ((float) e.y)), 1.0f);
+            ctx.changeTempo ([&] { ts.insertTempo (te::BeatPosition::fromBeats (juce::jmax (0.0, beat)), std::round (yToBpm ((float) e.y)), 1.0f); });
             for (int k = 0; k < ts.getNumTempos(); ++k)
                 if (std::abs (ts.getTempo (k)->getStartBeat().inBeats() - beat) < 1.0e-6) dragIndex = k;
         }
@@ -1117,6 +1120,8 @@ public:
         auto* t = ts.getTempo (dragIndex);
         if (t == nullptr) return;
         const double bpm = e.mods.isShiftDown() ? yToBpm ((float) e.y) : std::round (yToBpm ((float) e.y));
+        ctx.changeTempo ([&]
+        {
         t->setBpm (bpm);
         if (dragIndex > 0)
         {
@@ -1126,6 +1131,7 @@ public:
             const double beat = juce::jlimit (prev, juce::jmax (prev, next), std::round (ctx.toBeats (juce::jmax (0.0, owner.xToTime ((float) e.x)))));
             if (std::abs (beat - t->getStartBeat().inBeats()) > 1.0e-6) t->setStartBeat (te::BeatPosition::fromBeats (beat));
         }
+        });
         ctx.changed();
         owner.repaint();
     }
@@ -1149,8 +1155,8 @@ public:
             if (t == nullptr) return;
             auto& um = ctx.edit->getUndoManager();
             um.beginNewTransaction ("Tempo");
-            if (r == 1) t->setCurve (1.0f);
-            if (r == 2) t->setCurve (0.0f);
+            if (r == 1) ctx.changeTempo ([&] { t->setCurve (1.0f); });
+            if (r == 2) ctx.changeTempo ([&] { t->setCurve (0.0f); });
             if (r == 4) ts.removeTempo (index, true);
             if (r == 3)
             {
@@ -1162,7 +1168,7 @@ public:
                 {
                     const double bpm = w->getTextEditorContents ("bpm").replaceCharacter (',', '.').getDoubleValue();
                     if (res == 1 && bpm >= 20 && bpm <= 400 && ctx.edit != nullptr)
-                        if (auto* tt = ctx.edit->tempoSequence.getTempo (index)) { ctx.edit->getUndoManager().beginNewTransaction ("Tempo"); tt->setBpm (bpm); ctx.changed(); }
+                        if (auto* tt = ctx.edit->tempoSequence.getTempo (index)) { ctx.edit->getUndoManager().beginNewTransaction ("Tempo"); ctx.changeTempo ([&] { tt->setBpm (bpm); }); }
                 }), true);
             }
             ctx.changed();
@@ -1327,7 +1333,7 @@ public:
             if (r == 3 || r == 4)
             {
                 um.beginNewTransaction (U ("Ajouter une piste"));
-                ctx.collapsedFolders.erase (folder.itemID.toString());
+                EditContext::expand (folder);
                 auto* f = &folder;
                 if (auto* t = (r == 3 ? ctx.addAudioTrack() : ctx.addInstrumentTrack())) ctx.moveTrackIntoFolder (*t, *f);
             }
@@ -1535,7 +1541,7 @@ void ArrangementView::endTrackDrag()
             {
                 if (auto* f = dynamic_cast<te::FolderTrack*> (te::findTrackForID (*ctx.edit, dropIntoFolder)))
                 {
-                    ctx.collapsedFolders.erase (f->itemID.toString());
+                    EditContext::expand (*f);
                     ctx.moveTrackIntoFolder (*dragged, *f);
                     if (ctx.setStatus) ctx.setStatus (U ("« ") + dragged->getName() + U (" » rangée dans « ") + f->getName() + U (" »"));
                 }

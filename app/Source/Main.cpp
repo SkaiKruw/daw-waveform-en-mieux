@@ -604,7 +604,17 @@ private:
         check (dm.deviceManager.getCurrentAudioDevice() != nullptr, U ("une carte son est ouverte : ")
                + (dm.deviceManager.getCurrentAudioDevice() ? dm.deviceManager.getCurrentAudioDevice()->getName() : juce::String ("aucune")));
         auto* edit = m->getEdit();
-        te::LevelMeasurer::Client client;
+        te::LevelMeasurer::Client client, groupClient;
+        // La batterie passe dans un groupe : son vumètre (tranche de groupe de la MixConsole) doit bouger en lecture.
+        te::LevelMeterPlugin* groupMeter = nullptr;
+        for (auto* t : te::getAudioTracks (*edit))
+            if (t->getName() == "Batterie")
+            {
+                m->getContext().selectTrack (t);
+                if (auto* g = m->getContext().addFolderTrack (true, true)) groupMeter = EditContext::groupMeter (*g, false);
+            }
+        if (groupMeter != nullptr) groupMeter->measurer.addClient (groupClient);
+        float groupPeak = -100.0f;
         {
             auto& tr = edit->getTransport();
             auto s = juce::String::formatted ("avant lecture : contexte=%d chargement=%d cycle=%d boucle=%.2f-%.2f pos=%.2f lecture=%d",
@@ -635,6 +645,7 @@ private:
         {
             pump (100);
             peak = juce::jmax (peak, client.getAndClearAudioLevel (0).dB, client.getAndClearAudioLevel (1).dB);
+            groupPeak = juce::jmax (groupPeak, groupClient.getAndClearAudioLevel (0).dB, groupClient.getAndClearAudioLevel (1).dB);
             if (onde::traceEnabled())
             {
                 auto s = juce::String::formatted ("t=%d ms lecture=%d pos=%.2f", (i + 1) * 100, (int) edit->getTransport().isPlaying(), edit->getTransport().getPosition().inSeconds());
@@ -646,6 +657,8 @@ private:
         check (edit->getTransport().isPlaying(), U ("la lecture est en cours"));
         check (pos > 2.0 && pos < 6.0, U ("la tête de lecture avance en temps réel : ") + juce::String (pos, 2) + " s");
         check (peak > -40.0f, U ("du son sort au master : crête ") + juce::String (peak, 1) + " dB");
+        check (groupMeter != nullptr && groupPeak > -40.0f, U ("le vumètre de la tranche de groupe bouge en lecture : crête ") + juce::String (groupPeak, 1) + " dB");
+        if (groupMeter != nullptr) groupMeter->measurer.removeClient (groupClient);
         snapshot (*m, dir.getChildFile ("live-lecture.png"));
         for (int v : { 1, 2 }) { m->showView (v); pump (500); snapshot (*m, dir.getChildFile ("live-vue-" + juce::String (v) + ".png")); }
         m->showView (0);
@@ -1115,6 +1128,18 @@ private:
                 check (mutedFolder < full * 0.9, U ("rendre le dossier muet coupe ses pistes (") + juce::String (full, 3) + U (" → ") + juce::String (mutedFolder, 3) + ")");
                 ctx.toggleCollapsed (*folder);
                 mc->showView (1); pump (300);
+                {
+                    // Le repli est enregistré dans le projet.
+                    const auto f = dir.getChildFile ("repli-dossier.onde");
+                    const bool saved = mc->saveProjectTo (f);
+                    auto reopened = MainComponent::loadProject (*engine, f);
+                    bool collapsedAfter = false;
+                    if (reopened != nullptr)
+                        for (auto* ft : te::getTracksOfType<te::FolderTrack> (*reopened, true))
+                            if (ft->itemID == folder->itemID) collapsedAfter = EditContext::isCollapsed (*ft);
+                    check (saved && collapsedAfter, U ("le repli d'un dossier est enregistré avec le projet"));
+                    EditContext::destroyEdit (reopened);
+                }
                 ctx.toggleCollapsed (*folder);
 
                 // La batterie (piste la plus forte) passe du dossier à un groupe.
@@ -1127,6 +1152,7 @@ private:
                 check (grp != nullptr && grp->isSubmixFolder() && grp->getVolumePlugin() != nullptr && drums2->getParentFolderTrack() == grp,
                        U ("« Nouveau groupe » crée une piste de groupe (sous-mixage) avec son volume"));
                 const double withGroup = mixRms ("mix-groupe");
+                check (EditContext::groupMeter (*grp, false) != nullptr, U ("la tranche de groupe a son vumètre (mesuré en lecture par --live-test)"));
                 grp->getVolumePlugin()->setVolumeDb (-100.0f);
                 const double groupDown = mixRms ("mix-groupe-coupe");
                 grp->getVolumePlugin()->setVolumeDb (0.0f);
@@ -1165,6 +1191,84 @@ private:
                 mc->showView (0); pump (400); snapshot (*mc, dir.getChildFile ("7-tempo.png"));
                 ctx.perform ("edit.undo");
                 check (! ctx.hasTempoChanges(), U ("« Annuler » retire les changements de tempo"));
+            }
+
+            // Mode musical : au double du tempo, l'événement musical s'étire (moitié de durée), l'événement normal
+            // garde sa durée mais suit sa mesure de départ, le conteneur MIDI suit aussi ses mesures.
+            {
+                juce::File loop;
+                for (auto* t : te::getAudioTracks (e2))
+                    for (auto* c : t->getClips())
+                        if (auto* w = dynamic_cast<te::WaveAudioClip*> (c))
+                            if (AudioEditorView::sourceFileOf (*w).existsAsFile()) loop = AudioEditorView::sourceFileOf (*w);
+                const double beat = 60.0 / ctx.bpm(), bars4 = 16 * beat;
+                auto tA = e2.insertNewAudioTrack (te::TrackInsertPoint (nullptr, te::getTopLevelTracks (e2).getLast()), nullptr);
+                auto tB = e2.insertNewAudioTrack (te::TrackInsertPoint (nullptr, te::getTopLevelTracks (e2).getLast()), nullptr);
+                tA->setName ("Musical"); tB->setName ("Normal");
+                auto cA = tA->insertWaveClip ("boucle musicale", loop, { { te::TimePosition(), te::TimePosition::fromSeconds (bars4) }, te::TimeDuration() }, false);
+                auto cB = tB->insertWaveClip ("boucle normale", loop, { { te::TimePosition::fromSeconds (8 * beat), te::TimePosition::fromSeconds (8 * beat + bars4) }, te::TimeDuration() }, false);
+                auto cM = tB->insertMIDIClip ("conteneur", { te::TimePosition::fromSeconds (16 * beat + bars4), te::TimePosition::fromSeconds (20 * beat + bars4) }, nullptr);
+                ctx.selectClip (cA.get());
+                ctx.perform ("audio.musical");
+                check (cA->getAutoTempo() && ! cB->getAutoTempo(), U ("Ctrl+Maj+M : mode musical sur l'événement sélectionné"));
+                const double midiBeat = ctx.toBeats (cM->getPosition().getStart().inSeconds());
+                e2.getUndoManager().beginNewTransaction ("Tempo");
+                ctx.changeTempo ([&] { e2.tempoSequence.getTempos()[0]->setBpm (ctx.bpm() * 2.0); });
+                const double lenA = cA->getPosition().getLength().inSeconds(), lenB = cB->getPosition().getLength().inSeconds();
+                check (std::abs (lenA - bars4 / 2) < 0.01, U ("tempo doublé : l'événement musical s'étire avec lui (") + juce::String (lenA, 2) + " s au lieu de " + juce::String (bars4, 2) + " s)");
+                check (std::abs (lenB - bars4) < 0.01 && std::abs (cB->getPosition().getStart().inSeconds() - 4 * beat) < 0.01,
+                       U ("l'événement normal garde sa durée et reste au début de sa mesure (") + juce::String (cB->getPosition().getStart().inSeconds(), 2) + " s)");
+                check (std::abs (ctx.toBeats (cM->getPosition().getStart().inSeconds()) - midiBeat) < 0.01,
+                       U ("le conteneur MIDI reste sur sa mesure (temps ") + juce::String (ctx.toBeats (cM->getPosition().getStart().inSeconds()), 2) + ")");
+                // Rendu de la piste musicale seule : du son jusqu'au bout de l'événement étiré.
+                const auto wavM = dir.getChildFile ("mode-musical.wav");
+                {
+                    EditContext::prepareAudioProxies (e2, 60000);
+                    te::Renderer::Parameters rp (e2);
+                    rp.destFile = wavM; rp.audioFormat = engine->getAudioFileFormatManager().getWavFormat();
+                    rp.bitDepth = 24; rp.sampleRateForAudio = 48000.0; rp.blockSizeForAudio = 512;
+                    rp.time = { te::TimePosition(), te::TimePosition::fromSeconds (lenA) };
+                    rp.usePlugins = true; rp.tracksToDo = te::toBitSet (juce::Array<te::Track*> { tA.get() });
+                    wavM.deleteFile();
+                    te::Renderer::renderToFile ("Rendu", rp);
+                }
+                double rate = 0;
+                const auto rendered = readAll (wavM, rate);
+                const int lastSec = (int) rate;
+                const float tail = rendered.getNumSamples() > lastSec ? rendered.getRMSLevel (0, rendered.getNumSamples() - lastSec, lastSec) : 0.0f;
+                check (tail > 0.01f, U ("rendu : l'événement musical joue jusqu'au bout de sa nouvelle durée (RMS de la dernière seconde ") + juce::String (tail, 3) + ")");
+                // Preuve de l'étirement : toutes les frappes des 4 mesures sont là, deux fois plus serrées.
+                auto onsets = [] (const juce::AudioBuffer<float>& b, double sr)
+                {
+                    const int hop = (int) (sr * 0.01);
+                    int count = 0; float prev = 0.0f; double lastOnset = -1.0;
+                    for (int i = 0; i + hop <= b.getNumSamples(); i += hop)
+                    {
+                        const float e = b.getRMSLevel (0, i, hop);
+                        if (e > 0.05f && e > prev * 2.5f && i / sr - lastOnset > 0.08) { ++count; lastOnset = i / sr; }
+                        prev = e;
+                    }
+                    return count;
+                };
+                const auto wavN = dir.getChildFile ("mode-normal.wav");
+                {
+                    te::Renderer::Parameters rp (e2);
+                    rp.destFile = wavN; rp.audioFormat = engine->getAudioFileFormatManager().getWavFormat();
+                    rp.bitDepth = 24; rp.sampleRateForAudio = 48000.0; rp.blockSizeForAudio = 512;
+                    rp.time = { cB->getPosition().getStart(), cB->getPosition().getEnd() };
+                    rp.usePlugins = true; rp.tracksToDo = te::toBitSet (juce::Array<te::Track*> { tB.get() });
+                    wavN.deleteFile();
+                    te::Renderer::renderToFile ("Rendu", rp);
+                }
+                const auto normal = readAll (wavN, rate);
+                const int hitsMusical = onsets (rendered, rate), hitsNormal = onsets (normal, rate);
+                check (hitsNormal > 4 && std::abs (hitsMusical - hitsNormal) <= juce::jmax (2, hitsNormal / 8),
+                       U ("étirement réel : ") + juce::String (hitsMusical) + U (" frappes en ") + juce::String (lenA, 2) + U (" s contre ")
+                       + juce::String (hitsNormal) + U (" en ") + juce::String (lenB, 2) + U (" s pour l'original"));
+                ctx.perform ("edit.undo");
+                check (std::abs (cA->getPosition().getLength().inSeconds() - bars4) < 0.01 && std::abs (cB->getPosition().getStart().inSeconds() - 8 * beat) < 0.01,
+                       U ("« Annuler » remet le tempo et les événements à leur place"));
+                tA->setMute (true); tB->setMute (true);
             }
         }
 

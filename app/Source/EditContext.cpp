@@ -410,8 +410,8 @@ int EditContext::depthOf (const te::Track& t)
 
 void EditContext::toggleCollapsed (const te::Track& f)
 {
-    const auto id = f.itemID.toString();
-    if (collapsedFolders.count (id)) collapsedFolders.erase (id); else collapsedFolders.insert (id);
+    auto state = f.state;
+    if (isCollapsed (f)) state.removeProperty ("ondeCollapsed", nullptr); else state.setProperty ("ondeCollapsed", true, nullptr);
     changed();
 }
 
@@ -425,6 +425,7 @@ te::FolderTrack* EditContext::addFolderTrack (bool submix, bool moveSelectedTrac
     static int counter = 0;
     f->setName ((submix ? U ("Groupe ") : U ("Dossier ")) + juce::String (++counter));
     f->setColour (submix ? juce::Colour (0xff3fae8f) : juce::Colour (0xffb08a4a));
+    if (submix) groupMeter (*f, true);
     if (sel != nullptr) moveTrackIntoFolder (*sel, *f);
     selectedFolderID = f->itemID;
     changed();
@@ -517,4 +518,38 @@ void EditContext::destroyEdit (std::unique_ptr<te::Edit>& e)
     e->getTransport().freePlaybackContext();
     e.reset();
     dm.deviceManager.addAudioCallback (callback);
+}
+
+void EditContext::changeTempo (const std::function<void()>& change)
+{
+    if (edit == nullptr) { change(); return; }
+    te::EditTimecodeRemapperSnapshot snap;
+    snap.savePreChangeState (*edit);
+    change();
+    snap.remapEdit (*edit);
+    changed();
+}
+
+void EditContext::setMusicalMode (te::WaveAudioClip& c, bool on)
+{
+    if (c.getAutoTempo() == on) return;
+    if (on)
+    {
+        // Tempo d'origine du fichier : celui du projet là où l'événement commence (enregistré ou importé à ce tempo).
+        const auto info = c.getAudioFile().getInfo();
+        const double bpm = c.edit.tempoSequence.getBpmAt (c.getPosition().getStart());
+        auto loop = c.getLoopInfo();
+        loop.setBpm (bpm, info);
+        c.setLoopInfo (loop);
+    }
+    c.setAutoTempo (on);
+}
+
+te::LevelMeterPlugin* EditContext::groupMeter (te::FolderTrack& f, bool createIfMissing)
+{
+    if (! f.isSubmixFolder()) return nullptr;
+    if (auto* lm = f.pluginList.getPluginsOfType<te::LevelMeterPlugin>().getLast()) return lm;
+    if (! createIfMissing) return nullptr;
+    f.pluginList.insertPlugin (te::LevelMeterPlugin::create(), -1);
+    return f.pluginList.getPluginsOfType<te::LevelMeterPlugin>().getLast();
 }

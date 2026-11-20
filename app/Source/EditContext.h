@@ -96,14 +96,15 @@ public:
 
     // Dossiers de pistes (et pistes de groupe = dossiers de sous-mixage).
     te::EditItemID selectedFolderID;
-    std::set<juce::String> collapsedFolders;
     te::FolderTrack* getSelectedFolder() const;
     void selectFolder (te::FolderTrack*);
     te::FolderTrack* addFolderTrack (bool submix, bool moveSelectedTrackInside);
     void moveTrackIntoFolder (te::Track&, te::FolderTrack&);
     void moveTrackOutOfFolder (te::Track&);
     static int depthOf (const te::Track&);
-    bool isCollapsed (const te::Track& f) const      { return collapsedFolders.count (f.itemID.toString()) > 0; }
+    // Repli d'un dossier : propriété de la piste, donc enregistré avec le projet (hors annulation, comme Cubase).
+    static bool isCollapsed (const te::Track& f)    { return f.state.getProperty ("ondeCollapsed", false); }
+    static void expand (te::Track& f)               { f.state.removeProperty ("ondeCollapsed", nullptr); }
     void toggleCollapsed (const te::Track& f);
     te::TrackInsertPoint insertPointForNewTrack() const;
 
@@ -120,6 +121,14 @@ public:
     // Ferme un projet sans risque de blocage : le callback audio est détaché (ce qui attend la fin du bloc
     // en cours) avant que Tracktion arrête ses threads de calcul, puis rebranché.
     static void destroyEdit (std::unique_ptr<te::Edit>&);
+    // Modifie le tempo en gardant tout calé sur les mesures (comme Cubase) : conteneurs MIDI, événements audio
+    // (début ; en mode musical, aussi la durée, étirée), délimiteurs et automation sont recalés.
+    void changeTempo (const std::function<void()>& change);
+    // Mode musical : l'événement audio suit le tempo (étirement temporel). Le tempo d'origine est celui du
+    // projet au début de l'événement au moment de l'activation.
+    static void setMusicalMode (te::WaveAudioClip&, bool);
+    // Vumètre d'une piste de groupe (après son volume) : ajouté à la création et à l'ouverture des anciens projets.
+    static te::LevelMeterPlugin* groupMeter (te::FolderTrack&, bool createIfMissing);
 
     // Actions (menus, palette Ctrl+K, raccourcis).
     juce::OwnedArray<Action> actions;

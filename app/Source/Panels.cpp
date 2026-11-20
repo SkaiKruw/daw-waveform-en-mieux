@@ -1172,7 +1172,7 @@ void TransportPanel::mouseDrag (const juce::MouseEvent& e)
 {
     if (! draggingTempo || ctx.edit == nullptr) return;
     const double bpm = juce::jlimit (20.0, 400.0, dragTempo - e.getDistanceFromDragStartY() * (e.mods.isShiftDown() ? 0.05 : 0.5));
-    ctx.edit->tempoSequence.getTempoAt (ctx.edit->getTransport().getPosition()).setBpm (std::round (bpm * 100.0) / 100.0);
+    ctx.changeTempo ([&] { ctx.edit->tempoSequence.getTempoAt (ctx.edit->getTransport().getPosition()).setBpm (std::round (bpm * 100.0) / 100.0); });
     ctx.changed();
 }
 

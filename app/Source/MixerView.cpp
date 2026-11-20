@@ -57,6 +57,7 @@ public:
             mute.onClick = [this] { group->setMute (mute.getToggleState()); ctx.changed(); };
             solo.onClick = [this] { group->setSolo (solo.getToggleState()); ctx.changed(); };
             addAndMakeVisible (mute); addAndMakeVisible (solo);
+            if (auto* lm = EditContext::groupMeter (*group, false)) { meterPlugin = lm; measurer = &lm->measurer; measurer->addClient (client); }
         }
         else masterTap = std::make_unique<MasterLevelTap> (ctx);
         sync();

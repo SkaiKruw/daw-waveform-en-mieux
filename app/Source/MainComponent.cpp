@@ -169,7 +169,6 @@ void MainComponent::setEdit (std::unique_ptr<te::Edit> newEdit, const juce::File
     ctx.selectedClipID = {}; ctx.selectedTrackID = {};
     ctx.automationShown.clear();
     ctx.selectedFolderID = {};
-    ctx.collapsedFolders.clear();
     EditContext::destroyEdit (edit);
     edit = std::move (newEdit);
     ctx.edit = edit.get();
@@ -178,6 +177,13 @@ void MainComponent::setEdit (std::unique_ptr<te::Edit> newEdit, const juce::File
     untitled = isUntitled;
     ctx.edit = edit.get();
     if (edit == nullptr) return;
+    {
+        // Anciens projets : les pistes de groupe reçoivent leur vumètre (sans entrée dans l'historique).
+        bool added = false;
+        for (auto* f : te::getTracksOfType<te::FolderTrack> (*edit, true))
+            if (f->isSubmixFolder() && EditContext::groupMeter (*f, false) == nullptr) { EditContext::groupMeter (*f, true); added = true; }
+        if (added) edit->getUndoManager().clearUndoHistory();
+    }
 
     // Les fichiers audio sont référencés relativement au projet : Tracktion doit savoir où il se trouve.
     edit->editFileRetriever = [file] { return file; };
@@ -385,7 +391,8 @@ void MainComponent::registerActions()
         if (! edit) return;
         edit->getUndoManager().beginNewTransaction ("Tempo");
         const double beat = std::round (ctx.toBeats (edit->getTransport().getPosition().inSeconds()));
-        edit->tempoSequence.insertTempo (te::BeatPosition::fromBeats (beat), ctx.bpmAt (edit->getTransport().getPosition().inSeconds()), 1.0f);
+        const double here = ctx.bpmAt (edit->getTransport().getPosition().inSeconds());
+        ctx.changeTempo ([&] { edit->tempoSequence.insertTempo (te::BeatPosition::fromBeats (beat), here, 1.0f); });
         ctx.tempoTrackShown = true;
         setStatus (U ("Changement de tempo inséré : faites glisser son point dans la piste de tempo"));
         ctx.changed();
@@ -428,6 +435,20 @@ void MainComponent::registerActions()
                 w->setFadeIn (te::TimeDuration::fromSeconds (ctx.beatSeconds()));
                 w->setFadeOut (te::TimeDuration::fromSeconds (ctx.beatSeconds()));
             }
+        ctx.changed();
+    });
+    ctx.addAction ("audio.musical", U ("Mode musical (l'événement suit le tempo)"), "Audio", KP ('m', ctrl | shift, 0), [this]
+    {
+        if (! edit) return;
+        juce::Array<te::WaveAudioClip*> clips;
+        for (auto* c : ctx.getSelectedClips()) if (auto* w = dynamic_cast<te::WaveAudioClip*> (c)) clips.add (w);
+        if (clips.isEmpty()) { setStatus (U ("Sélectionnez un événement audio")); return; }
+        const bool on = ! clips.getFirst()->getAutoTempo();
+        edit->getUndoManager().beginNewTransaction (U ("Mode musical"));
+        for (auto* w : clips) EditContext::setMusicalMode (*w, on);
+        EditContext::prepareAudioProxies (*edit, 20000);
+        setStatus (on ? U ("Mode musical activé : l'événement s'étire avec le tempo")
+                      : U ("Mode musical désactivé : l'événement garde sa durée"));
         ctx.changed();
     });
     ctx.addAction ("audio.separate", U ("Séparer les sources (voix, batterie, basse, autres)…"), "Audio", KP ('u', ctrl | shift, 0),
@@ -879,7 +900,7 @@ void MainComponent::changeTempo()
         if (r == 1 && bpm >= 20 && bpm <= 400 && edit)
         {
             edit->getUndoManager().beginNewTransaction ("Tempo");
-            edit->tempoSequence.getTempoAt (cursor).setBpm (bpm);
+            ctx.changeTempo ([&] { edit->tempoSequence.getTempoAt (cursor).setBpm (bpm); });
             setStatus ("Tempo : " + juce::String (bpm, 2) + " BPM");
             ctx.changed();
         }
