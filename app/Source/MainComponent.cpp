@@ -90,6 +90,12 @@ MainComponent::MainComponent (te::Engine& e, PluginCatalog& c) : engine (e), cat
 
     addChildComponent (palette);
     registerActions();
+    // Développement : ONDE_REMOTE_LOCAL=<port> démarre la télécommande sur 127.0.0.1 (aperçu sans pare-feu).
+    if (const int p = juce::SystemStats::getEnvironmentVariable ("ONDE_REMOTE_LOCAL", {}).getIntValue(); p > 0 && remote.start (p, true))
+    {
+        std::printf ("Telecommande locale : http://127.0.0.1:%d/?k=%s\n", p, remote.getCode().toRawUTF8());
+        std::fflush (stdout);
+    }
     setWantsKeyboardFocus (true);
     setOpaque (true);
     setSize (1600, 940);
@@ -100,6 +106,8 @@ MainComponent::MainComponent (te::Engine& e, PluginCatalog& c) : engine (e), cat
 MainComponent::~MainComponent()
 {
     onde::trace ("~MainComponent: début");
+    if (remoteWindow != nullptr) delete remoteWindow.getComponent();
+    remote.stop();
     juce::Desktop::getInstance().removeFocusChangeListener (this);
     catalog.removeChangeListener (this);
     ctx.removeChangeListener (this);
@@ -589,6 +597,11 @@ void MainComponent::registerActions()
         if (lowerVisible && lowerTab == 1) setZone (1, false); else showView (1);
     });
     ctx.addAction ("file.audio", U ("Configuration du studio (carte son)…"), "Studio", KP (',', ctrl, 0), [this] { showAudioSettings(); })->separatorBefore = true;
+    ctx.addAction ("studio.remote", U ("Télécommande (téléphone)…"), "Studio", {}, [this]
+    {
+        if (remoteWindow != nullptr) { remoteWindow->toFront (true); return; }
+        remoteWindow = RemotePanel::show (remote);
+    });
     ctx.addAction ("plugins.scan", U ("Rechercher des plugins VST3 (analyse isolée)"), "Studio", {}, [this] { catalog.startScan(); setStatus (U ("Analyse des plugins lancée")); });
     ctx.addAction ("plugins.restart", U ("Relancer tous les plugins arrêtés"), "Studio", {}, [this]
     {

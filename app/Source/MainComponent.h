@@ -8,6 +8,8 @@
 #include "AudioEditorView.h"
 #include "Exporter.h"
 #include "StemSeparator.h"
+#include "RemoteControl.h"
+#include "RemotePanel.h"
 #include "CommandPalette.h"
 #include "Panels.h"
 
@@ -26,6 +28,7 @@ public:
     EditContext& getContext() { return ctx; }
     void showView (int);                            // 0 projet, 1 MixConsole, 2 éditeur de notes, 3 éditeur audio
     AudioEditorView* getAudioEditor() { return audioEditor.get(); }
+    RemoteControl& getRemote() { return remote; }
     void openPalette (const juce::String& query = {});
     void closePalette() { palette.close(); }
 
@@ -118,6 +121,8 @@ private:
     juce::Rectangle<int> lowerArea, centreArea;
 
     CommandPalette palette { ctx };
+    RemoteControl remote { ctx };                       // télécommande depuis un téléphone
+    juce::Component::SafePointer<juce::DialogWindow> remoteWindow;
     juce::String status;
     juce::Time statusTime, lastAutosave;
     std::unique_ptr<juce::FileChooser> chooser;

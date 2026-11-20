@@ -1,0 +1,298 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no">
+<meta name="theme-color" content="#16181c">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<link rel="manifest" href="/manifest.json">
+<title>Onde · Télécommande</title>
+<style>
+  :root {
+    --bg: #16181c; --panel: #1f2228; --key: #2a2e36; --key-hi: #343944; --line: #3a3f4a;
+    --text: #e8eaee; --dim: #8b919c; --accent: #4fa3ff; --play: #3ccf6e; --rec: #ff4d4d;
+    --loop: #4fa3ff; --warn: #ffb547;
+  }
+  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  html, body { margin: 0; height: 100%; background: var(--bg); color: var(--text);
+    font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; overscroll-behavior: none; user-select: none; }
+  body { display: flex; flex-direction: column; padding: env(safe-area-inset-top) env(safe-area-inset-right) 0 env(safe-area-inset-left); }
+
+  header { padding: 12px 16px 10px; background: var(--panel); border-bottom: 1px solid var(--line); }
+  .row { display: flex; align-items: center; gap: 10px; }
+  .bars { font: 600 34px/1.1 ui-monospace, "Cascadia Mono", Consolas, monospace; letter-spacing: 1px; flex: 1; }
+  .meta { text-align: right; color: var(--dim); font-size: 13px; line-height: 1.35; }
+  .meta b { color: var(--text); font-size: 17px; }
+  .sub { margin-top: 4px; color: var(--dim); font-size: 13px; display: flex; gap: 8px; align-items: center; }
+  .dot { width: 9px; height: 9px; border-radius: 50%; background: var(--dim); display: inline-block; }
+  .dot.ok { background: var(--play); } .dot.err { background: var(--rec); }
+  .pill { padding: 1px 7px; border-radius: 9px; border: 1px solid var(--line); font-size: 11px; }
+  .pill.on { border-color: transparent; background: var(--accent); color: #0b0d10; }
+  .pill.rec { background: var(--rec); color: #fff; border-color: transparent; }
+  .pill.play { background: var(--play); color: #0b0d10; border-color: transparent; }
+
+  main { flex: 1; overflow-y: auto; padding: 12px; }
+  .grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; }
+  @media (min-width: 560px) { .grid { grid-template-columns: repeat(5, 1fr); } }
+  .key { aspect-ratio: 1; border: 0; border-radius: 16px; background: var(--key); color: var(--text);
+    display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 8px; padding: 6px;
+    font: 600 12px/1.15 inherit; text-align: center; box-shadow: inset 0 -3px 0 rgba(0,0,0,.25); transition: transform .06s, background .1s; }
+  .key:active, .key.pressed { transform: scale(.95); background: var(--key-hi); }
+  .key svg { width: 38%; height: 38%; fill: currentColor; }
+  .key.on { background: var(--accent); color: #0b0d10; }
+  .key.on-play { background: var(--play); color: #0b0d10; }
+  .key.on-rec { background: var(--rec); color: #fff; }
+  .key.empty { background: transparent; border: 2px dashed var(--line); color: var(--dim); box-shadow: none; }
+  .key.edit { outline: 2px solid var(--warn); }
+
+  .tracks { display: flex; flex-direction: column; gap: 8px; }
+  .track { display: flex; align-items: center; gap: 8px; background: var(--panel); border-radius: 12px; padding: 8px 8px 8px 0; overflow: hidden; }
+  .track .sw { width: 6px; align-self: stretch; }
+  .track .nm { flex: 1; font-weight: 600; font-size: 15px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; padding: 10px 4px; }
+  .track.sel { outline: 2px solid var(--accent); }
+  .tb { width: 48px; height: 44px; border: 0; border-radius: 10px; background: var(--key); color: var(--dim); font: 700 15px inherit; }
+  .tb.m.on { background: #e9a23b; color: #111; } .tb.s.on { background: #e6d43d; color: #111; } .tb.r.on { background: var(--rec); color: #fff; }
+
+  nav { display: flex; background: var(--panel); border-top: 1px solid var(--line); padding-bottom: env(safe-area-inset-bottom); }
+  nav button { flex: 1; border: 0; background: none; color: var(--dim); padding: 12px 4px; font: 600 12px inherit; }
+  nav button.cur { color: var(--accent); }
+  .tools { display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px; color: var(--dim); font-size: 13px; }
+  .tools button { border: 1px solid var(--line); background: var(--key); color: var(--text); border-radius: 10px; padding: 8px 12px; font: 600 13px inherit; }
+
+  dialog { border: 0; border-radius: 16px; background: var(--panel); color: var(--text); width: min(92vw, 460px); max-height: 80vh; padding: 0; }
+  dialog::backdrop { background: rgba(0,0,0,.6); }
+  .dlg-h { padding: 14px 16px; border-bottom: 1px solid var(--line); display: flex; gap: 8px; }
+  .dlg-h input { flex: 1; background: var(--bg); border: 1px solid var(--line); color: var(--text); border-radius: 10px; padding: 10px; font-size: 16px; }
+  .dlg-h button, .code button { border: 0; border-radius: 10px; background: var(--key); color: var(--text); padding: 10px 14px; font: 600 14px inherit; }
+  .list { overflow-y: auto; max-height: 60vh; }
+  .list div { padding: 12px 16px; border-bottom: 1px solid var(--line); }
+  .list small { color: var(--dim); display: block; }
+  .code { padding: 22px 18px; text-align: center; }
+  .code input { width: 100%; font: 600 30px ui-monospace, monospace; text-align: center; letter-spacing: 8px; background: var(--bg);
+    border: 1px solid var(--line); border-radius: 12px; color: var(--text); padding: 12px; margin: 14px 0; }
+  .code p { color: var(--dim); font-size: 14px; margin: 0; }
+</style>
+</head>
+<body>
+<header>
+  <div class="row">
+    <div class="bars" id="bars">–</div>
+    <div class="meta"><b id="bpm">–</b> BPM<br><span id="sig">–</span></div>
+  </div>
+  <div class="sub">
+    <span class="dot" id="link"></span><span id="project">Connexion…</span>
+    <span style="flex:1"></span>
+    <span class="pill" id="pPlay">LECTURE</span><span class="pill" id="pRec">REC</span><span class="pill" id="pLoop">CYCLE</span>
+  </div>
+</header>
+
+<main id="main"></main>
+
+<nav id="nav">
+  <button data-page="transport" class="cur">Transport</button>
+  <button data-page="edit">Édition</button>
+  <button data-page="tracks">Pistes</button>
+  <button data-page="custom">Perso</button>
+</nav>
+
+<dialog id="picker">
+  <div class="dlg-h"><input id="search" placeholder="Rechercher une commande…" autocomplete="off"><button id="clearSlot">Vider</button></div>
+  <div class="list" id="actionList"></div>
+</dialog>
+
+<dialog id="codeDlg">
+  <div class="code">
+    <b>Code d'appairage</b>
+    <input id="codeInput" inputmode="numeric" maxlength="6" placeholder="000000">
+    <p>Affiché dans Onde : Studio › Télécommande (téléphone).</p>
+    <p style="margin-top:14px"><button id="codeOk">Connecter</button></p>
+  </div>
+</dialog>
+
+<script>
+"use strict";
+// Icônes (24x24).
+const I = {
+  play: '<path d="M7 4.5v15l12-7.5z"/>', stop: '<path d="M6 6h12v12H6z"/>', rec: '<circle cx="12" cy="12" r="7"/>',
+  home: '<path d="M5 5h2v14H5zM20 5v14L9 12z"/>', end: '<path d="M17 5h2v14h-2zM4 5v14l11-7z"/>',
+  rew: '<path d="M11 6v12l-8-6zM21 6v12l-8-6z"/>', fwd: '<path d="M13 6v12l8-6zM3 6v12l8-6z"/>',
+  loop: '<path d="M7 7h10V4l4 4-4 4V9H7v3H5V9a2 2 0 0 1 2-2zm10 10H7v3l-4-4 4-4v3h10v-3h2v3a2 2 0 0 1-2 2z"/>',
+  click: '<path d="M9 3h6l4 18H5zm1.6 2-1 4.5 5.9-3.1L15 5zM8.5 14l-.9 4.5h8.8l-1.3-6z"/>',
+  marker: '<path d="M6 3h12v15l-6-4-6 4z"/>', prev: '<path d="M7 5h2v14H7zm11 0v14l-8-7z"/>', next: '<path d="M15 5h2v14h-2zM6 5v14l8-7z"/>',
+  undo: '<path d="M12 5a8 8 0 1 1-7.4 11h2.2A6 6 0 1 0 12 7H8.5l3 3-1.4 1.4L4.7 6l5.4-5.4L11.5 2l-3 3z"/>',
+  redo: '<path d="M12 5a8 8 0 1 0 7.4 11h-2.2A6 6 0 1 1 12 7h3.5l-3 3 1.4 1.4L19.3 6l-5.4-5.4L12.5 2l3 3z"/>',
+  cut: '<path d="M9.6 8.2 12 10.6l6-6h3L13.4 12 21 19.4h-3L12 13.4l-2.4 2.4a3.5 3.5 0 1 1-1.4-1.4L10.6 12 8.2 9.6A3.5 3.5 0 1 1 9.6 8.2zM6 7.5a1.5 1.5 0 1 0 0-3 1.5 1.5 0 0 0 0 3zm0 12a1.5 1.5 0 1 0 0-3 1.5 1.5 0 0 0 0 3z"/>',
+  dup: '<path d="M8 3h11v13h-2V5H8zM4 7h11v14H4z"/>', del: '<path d="M8 3h8l1 2h4v2H3V5h4zm-3 6h14l-1 12H6z"/>',
+  save: '<path d="M4 3h13l4 4v14H4zm3 2v5h9V5zm5 8a3 3 0 1 0 0 6 3 3 0 0 0 0-6z"/>',
+  q: '<path d="M4 18h3v-6H4zm6.5 0h3V6h-3zM17 18h3V9h-3z"/>', snap: '<path d="M7 3v8a5 5 0 0 0 10 0V3h-3v8a2 2 0 0 1-4 0V3zm0 14h3v4H7zm7 0h3v4h-3z"/>',
+  mix: '<path d="M5 3h2v6h2v3H7v9H5v-9H3V9h2zm6 0h2v12h2v3h-2v3h-2v-3H9v-3h2zm6 0h2v4h2v3h-2v11h-2V10h-2V7h2z"/>',
+  fit: '<path d="M3 3h7v2H5v5H3zm11 0h7v7h-2V5h-5zM3 14h2v5h5v2H3zm16 0h2v7h-7v-2h5z"/>',
+  punch: '<path d="M3 10h4v4H3zm14 0h4v4h-4zM9 6h6v12H9z"/>', mute: '<path d="M4 9h4l5-4v14l-5-4H4zm12.6.2 1.4-1.4 2 2 2-2 1.4 1.4-2 2 2 2-1.4 1.4-2-2-2 2-1.4-1.4 2-2z"/>',
+  up: '<path d="M12 5l7 8h-5v6h-4v-6H5z"/>', down: '<path d="M12 19l-7-8h5V5h4v6h5z"/>', plus: '<path d="M11 4h2v7h7v2h-7v7h-2v-7H4v-2h7z"/>',
+  note: '<path d="M9 4v11.6A3.5 3.5 0 1 0 11 19V8h7V4z"/>', star: '<path d="M12 3l2.6 6 6.4.6-4.8 4.3 1.4 6.4L12 17l-5.6 3.3 1.4-6.4L3 9.6 9.4 9z"/>'
+};
+const svg = n => '<svg viewBox="0 0 24 24">' + (I[n] || I.star) + '</svg>';
+
+// Pages par défaut : [commande, libellé, icône, état à refléter].
+const PAGES = {
+  transport: [
+    ["transport.play", "Lecture / Stop", "play", "playing"], ["transport.stop", "Stop", "stop"], ["transport.record", "Enregistrer", "rec", "recording"],
+    ["transport.home", "Début", "home"], ["transport.rewind", "Mesure −1", "rew"], ["transport.forward", "Mesure +1", "fwd"],
+    ["transport.loop", "Cycle", "loop", "looping"], ["transport.click", "Métronome", "click", "click"], ["transport.punch", "Punch", "punch"],
+    ["transport.prevMarker", "Repère préc.", "prev"], ["transport.addMarker", "Ajouter repère", "marker"], ["transport.nextMarker", "Repère suiv.", "next"]
+  ],
+  edit: [
+    ["edit.undo", "Annuler", "undo"], ["edit.redo", "Rétablir", "redo"], ["file.save", "Enregistrer le projet", "save"],
+    ["clip.split", "Couper au curseur", "cut"], ["clip.duplicate", "Dupliquer", "dup"], ["clip.delete", "Supprimer", "del"],
+    ["clip.quantise", "Quantifier", "q"], ["edit.snap", "Calage", "snap", "snap"], ["clip.mute", "Muet (événement)", "mute"],
+    ["view.mixer", "MixConsole", "mix"], ["view.zoomFit", "Tout voir", "fit"], ["midi.newPart", "Conteneur MIDI", "note"]
+  ]
+};
+const ICONS_BY_PREFIX = [["transport.play","play"],["transport.stop","stop"],["transport.record","rec"],["transport.loop","loop"],["transport.click","click"],
+  ["transport.rewind","rew"],["transport.forward","fwd"],["transport.home","home"],["transport.end","end"],["Marker","marker"],["edit.undo","undo"],["edit.redo","redo"],
+  ["clip.split","cut"],["duplicate","dup"],["delete","del"],["save","save"],["quantise","q"],["snap","snap"],["mute","mute"],["view.mixer","mix"],["zoom","fit"],
+  ["track.prev","up"],["track.next","down"],["track.add","plus"],["midi","note"],["punch","punch"]];
+const iconFor = id => (ICONS_BY_PREFIX.find(([p]) => id.includes(p)) || [0, "star"])[1];
+
+let code = new URLSearchParams(location.search).get("k") || localStorage.getItem("onde.code") || "";
+if (new URLSearchParams(location.search).get("k")) { localStorage.setItem("onde.code", code); history.replaceState(null, "", "/"); }
+let state = {}, actions = [], page = localStorage.getItem("onde.page") || "transport", editing = false, editSlot = -1;
+let custom = JSON.parse(localStorage.getItem("onde.custom") || "null") || [
+  ["track.prev", "Piste précédente", "up"], ["track.next", "Piste suivante", "down"], ["audio.arm", "Armer la piste", "rec"],
+  ["track.mute", "Muet (piste)", "mute"], ["track.solo", "Solo (piste)", "star"], ["audio.monitor", "Monitoring", "star"],
+  null, null, null, null, null, null
+];
+
+const $ = id => document.getElementById(id);
+const buzz = () => { if (navigator.vibrate) navigator.vibrate(12); };
+
+async function api(path, method = "GET") {
+  const r = await fetch(path + (path.includes("?") ? "&" : "?") + "k=" + encodeURIComponent(code), { method, cache: "no-store" });
+  if (r.status === 403) { askCode(); throw new Error("code"); }
+  if (!r.ok) throw new Error(r.status);
+  return r.json();
+}
+const act = id => api("/api/action?id=" + encodeURIComponent(id), "POST").then(poll).catch(() => {});
+const trackOp = (i, op) => api("/api/track?i=" + i + "&op=" + op, "POST").then(poll).catch(() => {});
+
+function askCode() {
+  if ($("codeDlg").open) return;
+  $("codeInput").value = ""; $("codeDlg").showModal(); $("codeInput").focus();
+}
+$("codeOk").onclick = () => { code = $("codeInput").value.trim(); localStorage.setItem("onde.code", code); $("codeDlg").close(); loadActions(); poll(); };
+
+function keyButton(def, slot) {
+  const b = document.createElement("button");
+  b.className = "key";
+  if (!def) { b.classList.add("empty"); b.innerHTML = svg("plus") + "<span>" + (editing ? "Choisir" : "Vide") + "</span>"; }
+  else {
+    b.innerHTML = svg(def[2]) + "<span>" + def[1] + "</span>";
+    const flag = def[3] || (actions.find(a => a.id === def[0] && a.on !== undefined && a.on !== null) ? "#" + def[0] : null);
+    if (flag) b.dataset.flag = flag;
+  }
+  if (editing && slot >= 0) b.classList.add("edit");
+  b.addEventListener("pointerdown", () => b.classList.add("pressed"));
+  ["pointerup", "pointerleave", "pointercancel"].forEach(e => b.addEventListener(e, () => b.classList.remove("pressed")));
+  b.onclick = () => {
+    buzz();
+    if (slot >= 0 && (editing || !def)) { openPicker(slot); return; }
+    if (def) act(def[0]);
+  };
+  return b;
+}
+
+function render() {
+  document.querySelectorAll("nav button").forEach(n => n.classList.toggle("cur", n.dataset.page === page));
+  const m = $("main"); m.innerHTML = "";
+  if (page === "tracks") {
+    const list = document.createElement("div"); list.className = "tracks"; list.id = "trackList"; m.appendChild(list);
+    renderTracks(); return;
+  }
+  if (page === "custom") {
+    const t = document.createElement("div"); t.className = "tools";
+    t.innerHTML = "<span>" + (editing ? "Touchez une case pour choisir sa commande" : "Vos boutons") + "</span>";
+    const e = document.createElement("button"); e.textContent = editing ? "Terminé" : "Modifier";
+    e.onclick = () => { editing = !editing; render(); }; t.appendChild(e); m.appendChild(t);
+  }
+  const g = document.createElement("div"); g.className = "grid"; m.appendChild(g);
+  const defs = page === "custom" ? custom : PAGES[page];
+  defs.forEach((d, i) => g.appendChild(keyButton(d, page === "custom" ? i : -1)));
+  updateFlags();
+}
+
+function renderTracks() {
+  const list = $("trackList"); if (!list) return;
+  const tracks = state.tracks || [];
+  const sig = JSON.stringify(tracks);
+  if (list.dataset.sig === sig) return;
+  list.dataset.sig = sig; list.innerHTML = "";
+  if (!tracks.length) { list.innerHTML = '<p style="color:var(--dim)">Aucune piste.</p>'; return; }
+  tracks.forEach(t => {
+    const row = document.createElement("div"); row.className = "track" + (t.sel ? " sel" : "");
+    row.innerHTML = '<div class="sw" style="background:#' + String(t.color).slice(-6) + '"></div><div class="nm"></div>';
+    row.querySelector(".nm").textContent = t.name;
+    row.querySelector(".nm").onclick = () => { buzz(); trackOp(t.i, "select"); };
+    [["m", "M", "mute"], ["s", "S", "solo"], ["r", "●", "arm"]].forEach(([c, label, op]) => {
+      const b = document.createElement("button"); b.className = "tb " + c + (t[op] ? " on" : ""); b.textContent = label;
+      b.onclick = () => { buzz(); trackOp(t.i, op); }; row.appendChild(b);
+    });
+    list.appendChild(row);
+  });
+}
+
+function updateFlags() {
+  document.querySelectorAll(".key[data-flag]").forEach(b => {
+    const f = b.dataset.flag;
+    let on = f.startsWith("#") ? !!(actions.find(a => a.id === f.slice(1)) || {}).on : !!state[f];
+    b.classList.toggle("on", on && f !== "playing" && f !== "recording");
+    b.classList.toggle("on-play", on && f === "playing");
+    b.classList.toggle("on-rec", on && f === "recording");
+  });
+}
+
+async function poll() {
+  try {
+    state = await api("/api/state");
+    $("link").className = "dot ok";
+    $("bars").textContent = state.bars || "–";
+    $("bpm").textContent = state.bpm ? (Math.round(state.bpm * 100) / 100) : "–";
+    $("sig").textContent = (state.sig || "") + " · " + (state.time || "");
+    $("project").textContent = state.project || "Onde";
+    $("pPlay").className = "pill" + (state.playing ? " play" : "");
+    $("pRec").className = "pill" + (state.recording ? " rec" : "");
+    $("pLoop").className = "pill" + (state.looping ? " on" : "");
+    updateFlags(); renderTracks();
+  } catch (e) {
+    if (e.message !== "code") { $("link").className = "dot err"; $("project").textContent = "Onde injoignable (télécommande coupée ?)"; }
+  }
+}
+
+async function loadActions() { try { actions = await api("/api/actions"); render(); } catch (e) {} }
+
+function openPicker(slot) {
+  editSlot = slot; $("search").value = ""; fillPicker(""); $("picker").showModal();
+}
+function fillPicker(q) {
+  const l = $("actionList"); l.innerHTML = ""; q = q.toLowerCase();
+  actions.filter(a => (a.name + " " + a.cat).toLowerCase().includes(q)).forEach(a => {
+    const d = document.createElement("div"); d.innerHTML = a.name + "<small>" + a.cat + "</small>";
+    d.onclick = () => { custom[editSlot] = [a.id, a.name, iconFor(a.id)]; saveCustom(); $("picker").close(); render(); };
+    l.appendChild(d);
+  });
+}
+$("search").oninput = e => fillPicker(e.target.value);
+$("clearSlot").onclick = () => { custom[editSlot] = null; saveCustom(); $("picker").close(); render(); };
+$("picker").addEventListener("click", e => { if (e.target === $("picker")) $("picker").close(); });
+function saveCustom() { localStorage.setItem("onde.custom", JSON.stringify(custom)); }
+
+document.querySelectorAll("nav button").forEach(n => n.onclick = () => { buzz(); page = n.dataset.page; editing = false; localStorage.setItem("onde.page", page); render(); });
+
+render();
+if (!code) askCode(); else { loadActions(); poll(); }
+let timer = setInterval(poll, 250);
+document.addEventListener("visibilitychange", () => { clearInterval(timer); if (!document.hidden) { poll(); timer = setInterval(poll, 250); } });
+setInterval(loadActions, 5000);   // états des commandes à cocher (calage, cycle…)
+</script>
+</body>
+</html>

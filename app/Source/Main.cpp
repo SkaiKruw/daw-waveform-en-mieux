@@ -1272,6 +1272,85 @@ private:
             }
         }
 
+        // Télécommande (téléphone) : vraies requêtes HTTP sur 127.0.0.1.
+        {
+            auto& e2 = *mc->getEdit();
+            auto& remote = mc->getRemote();
+            const int port = 8799;
+            check (remote.start (port, true), U ("télécommande : serveur démarré (port ") + juce::String (port) + ")");
+            auto request = [&] (const juce::String& target, bool post, int& status) -> juce::String
+            {
+                // Requête HTTP/1.1 brute, comme fetch() dans le navigateur du téléphone.
+                status = 0;
+                juce::StreamingSocket s;
+                if (! s.connect ("127.0.0.1", port, 3000)) return {};
+                const auto req = (post ? "POST " : "GET ") + target + " HTTP/1.1\r\nHost: 127.0.0.1\r\nContent-Length: 0\r\nConnection: close\r\n\r\n";
+                const auto raw = req.toStdString();
+                s.write (raw.data(), (int) raw.size());
+                juce::MemoryBlock resp;
+                char buf[4096];
+                for (;;)
+                {
+                    if (s.waitUntilReady (true, 3000) <= 0) break;
+                    const int n = s.read (buf, (int) sizeof (buf), false);
+                    if (n <= 0) break;
+                    resp.append (buf, (size_t) n);
+                }
+                const auto text = juce::String::fromUTF8 ((const char*) resp.getData(), (int) resp.getSize());
+                status = text.fromFirstOccurrenceOf (" ", false, false).getIntValue();
+                return text.fromFirstOccurrenceOf ("\r\n\r\n", false, false);
+            };
+            int st = 0;
+            const auto page = request ("/", false, st);
+            check (st == 200 && page.contains (U ("Télécommande")) && page.contains ("api/state"), U ("le téléphone reçoit la page de télécommande (") + juce::String (page.length()) + U (" caractères)"));
+            request ("/api/state", false, st);
+            check (st == 403, U ("sans code d'appairage, l'API refuse (") + juce::String (st) + ")");
+            const auto k = "k=" + remote.getCode();
+            pump (200);
+            auto state = juce::JSON::parse (request ("/api/state?" + k, false, st));
+            const int nTracks = te::getAudioTracks (e2).size();
+            check (st == 200 && state["tracks"].size() == nTracks && state.hasProperty ("bars") && (bool) state["playing"] == false,
+                   U ("état lu par le téléphone : ") + state["bars"].toString() + U (", ") + juce::String (state["bpm"].toString().getDoubleValue(), 1) + U (" BPM, ")
+                   + juce::String (state["tracks"].size()) + U (" pistes"));
+            auto actions = juce::JSON::parse (request ("/api/actions?" + k, false, st));
+            bool hasPlay = false, hasQuit = false;
+            for (int i = 0; i < actions.size(); ++i) { hasPlay |= actions[i]["id"] == juce::var ("transport.play"); hasQuit |= actions[i]["id"] == juce::var ("file.quit"); }
+            check (hasPlay && ! hasQuit, U ("liste des commandes pour les boutons perso (") + juce::String (actions.size()) + U (", sans « Quitter »)"));
+            const bool loopBefore = e2.getTransport().looping.get();
+            request ("/api/action?id=transport.loop&" + k, true, st);
+            pump (300);
+            check (st == 200 && e2.getTransport().looping.get() != loopBefore, U ("un bouton du téléphone déclenche une commande d'Onde (Cycle)"));
+            request ("/api/action?id=transport.loop&" + k, true, st); pump (200);
+            auto* first = te::getAudioTracks (e2)[0];
+            const bool muteBefore = first->isMuted (false);
+            request ("/api/track?i=0&op=mute&" + k, true, st);
+            pump (300);
+            check (first->isMuted (false) != muteBefore, U ("le téléphone rend une piste muette (« ") + first->getName() + U (" »)"));
+            request ("/api/track?i=0&op=mute&" + k, true, st); pump (300);
+            state = juce::JSON::parse (request ("/api/state?" + k, false, st));
+            check (state["tracks"][0]["mute"] == juce::var (muteBefore), U ("l'état renvoyé suit le changement"));
+            request ("/api/action?id=file.quit&" + k, true, st);
+            check (st == 404, U ("les commandes dangereuses (Quitter…) sont refusées (") + juce::String (st) + ")");
+            int last = 0;
+            for (int i = 0; i < 11; ++i) { request ("/api/state?k=000000", false, st); last = st; }
+            request ("/api/state?" + k, false, st);
+            check (last == 429 && st == 429, U ("10 codes faux bloquent l'API 30 s (") + juce::String (last) + ")");
+            // QR code de l'adresse.
+            const auto qr = QrCode::encode ("http://192.168.1.42:8765/?k=123456");
+            bool finders = qr.size() > 0;
+            for (auto [cx, cy] : { std::pair<int, int> { 0, 0 }, { qr.size() - 7, 0 }, { 0, qr.size() - 7 } })
+                for (int i = 0; i < 7 && finders; ++i)
+                    finders = qr.dark (cx + i, cy) && qr.dark (cx, cy + i) && qr.dark (cx + 6, cy + i) && qr.dark (cx + i, cy + 6) && qr.dark (cx + 3, cy + 3) && ! qr.dark (cx + 1, cy + 1);
+            check (finders && qr.version() >= 2 && qr.version() <= 4 && QrCode::encode (juce::String::repeatedString ("x", 200)).size() == 0,
+                   U ("QR code de l'adresse : version ") + juce::String (qr.version()) + U (", ") + juce::String (qr.size()) + U (" × ") + juce::String (qr.size()) + U (" modules"));
+            {
+                RemotePanel panel (remote);
+                pump (200);
+                snapshot (panel, dir.getChildFile ("10-telecommande.png"));
+            }
+            remote.stop();
+        }
+
         std::printf ("\n%s\n", failures == 0 ? "INTERFACE OK — toutes les vérifications passent." : "DES VÉRIFICATIONS ÉCHOUENT");
         std::fflush (stdout);
         trace ("fin du scénario, fermeture de la fenêtre");
