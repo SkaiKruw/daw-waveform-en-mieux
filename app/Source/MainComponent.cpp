@@ -58,6 +58,7 @@ MainComponent::MainComponent (te::Engine& e, PluginCatalog& c) : engine (e), cat
     addChildComponent (mediaRack);
     addAndMakeVisible (transport);
     toolbar.isZoneVisible = [this] (int z) { return isZoneVisible (z); };
+    toolbar.remoteState = [this] { return ! remote.isRunning() ? 0 : remote.phoneConnected() ? 2 : 1; };
     toolbar.getProjectTitle = [this]
     {
         const bool dirty = edit && edit->hasChangedSinceSaved();
@@ -1195,7 +1196,8 @@ void MainComponent::timerCallback()
     }
     if ((juce::Time::getCurrentTime() - lastAutosave).inSeconds() >= 15.0) autosave();
     if (status.isNotEmpty() && (juce::Time::getCurrentTime() - statusTime).inSeconds() > 8.0) status = {};
-    repaint (0, getHeight() - statusH, getWidth(), statusH);
+    // Barre d'état : redessinée quand le message change, sinon deux fois par seconde (charge CPU).
+    if (status != paintedStatus || ++statusTick % 12 == 0) { paintedStatus = status; repaint (0, getHeight() - statusH, getWidth(), statusH); }
 }
 
 juce::Rectangle<int> MainComponent::lowerHandle() const

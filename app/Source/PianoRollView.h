@@ -1,6 +1,7 @@
 // Éditeur de notes (zone inférieure) : édite le conteneur MIDI sélectionné.
 #pragma once
 #include "EditContext.h"
+#include "EditWatcher.h"
 
 class PianoRollView  : public juce::Component, private juce::Timer, private juce::ChangeListener
 {
@@ -21,7 +22,12 @@ public:
 
     static constexpr int toolbarH = 34, rulerH = 20, keysW = 70, velH = 90, defaultRowH = 13;
 private:
-    void timerCallback() override { repaint(); }
+    void timerCallback() override;
+    float cursorX() const;
+    EditWatcher watcher;
+    float lastCursorX = -1.0f;
+    double lastViewBeat = -1.0, lastPxPerBeat = -1.0;
+    int tick = 0;
     void changeListenerCallback (juce::ChangeBroadcaster*) override;
     juce::Rectangle<int> gridArea() const;
     juce::Rectangle<int> velArea() const;

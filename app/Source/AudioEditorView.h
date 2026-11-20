@@ -2,6 +2,7 @@
 // gain, normalisation, fondus, inversion, transposition, rognage et suppression d'une plage.
 #pragma once
 #include "EditContext.h"
+#include "EditWatcher.h"
 
 class AudioEditorView  : public juce::Component,
                          private juce::Timer,
@@ -31,6 +32,12 @@ public:
     static constexpr int toolbarH = 34, rulerH = 20;
 
 private:
+    float cursorX() const;
+    EditWatcher watcher;
+    float lastCursorX = -1.0f;
+    int tick = 0;
+    double lastViewStart = -1.0, lastViewLength = -1.0;
+    te::EditItemID lastFramed;
     void timerCallback() override;
     void changeListenerCallback (juce::ChangeBroadcaster*) override;
     te::WaveAudioClip* clip() const;

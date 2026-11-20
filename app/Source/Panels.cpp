@@ -100,6 +100,18 @@ namespace icons
             g.setColour (theme::rec); g.fillRect (r.getX(), r.getY(), 4.5f, 3.0f); g.fillRect (r.getRight() - 4.5f, r.getY(), 4.5f, 3.0f);
         };
     }
+    // Téléphone (télécommande) ; le point vert est ajouté par la barre d'outils quand un téléphone est connecté.
+    P phone()
+    {
+        return [] (juce::Graphics& g, R r, juce::Colour c)
+        {
+            auto body = r.withSizeKeepingCentre (r.getWidth() * 0.55f, r.getHeight());
+            g.setColour (c);
+            g.drawRoundedRectangle (body.reduced (0.75f), 2.5f, 1.6f);
+            g.fillRect (body.getCentreX() - 2.0f, body.getBottom() - 3.5f, 4.0f, 1.4f);
+            g.fillRect (body.reduced (2.6f, 3.2f).withTrimmedBottom (2.5f).withHeight (1.4f).withY (body.getY() + 2.6f));
+        };
+    }
     P metronome()
     {
         return [] (juce::Graphics& g, R r, juce::Colour c)
@@ -131,7 +143,11 @@ void StereoMeter::setLevels (float l, float r)
     auto smooth = [] (float old, float in) { return in > old ? in : juce::jmax (-100.0f, old - 1.5f); };
     levels[0] = smooth (levels[0], l); levels[1] = smooth (levels[1], r);
     peak[0] = juce::jmax (peak[0], l); peak[1] = juce::jmax (peak[1], r);
-    repaint();
+    // Redessin seulement si une barre ou une crête bouge d'au moins un pixel (silence : jamais).
+    const float len = (float) (isVertical ? getHeight() : getWidth());
+    auto px = [len] (float db) { return juce::roundToInt (juce::jlimit (0.0f, 1.0f, (db + 60.0f) / 66.0f) * len); };
+    const int shown[4] { px (levels[0]), px (levels[1]), px (peak[0]), px (peak[1]) };
+    if (std::memcmp (shown, drawn, sizeof (shown)) != 0) { std::memcpy (drawn, shown, sizeof (shown)); repaint(); }
 }
 
 void StereoMeter::paint (juce::Graphics& g)
@@ -204,6 +220,9 @@ ToolbarPanel::ToolbarPanel (EditContext& c) : ctx (c)
     quantBox.setTooltip (U ("Valeur de quantification (Q)"));
     quantBox.onChange = [this] { const double v[] = { 1.0, 0.5, 0.25, 0.125 }; ctx.quantizeBeats = v[juce::jlimit (0, 3, quantBox.getSelectedId() - 1)]; ctx.changed(); };
     for (auto* b : { &gridBox, &quantBox }) { b->setWantsKeyboardFocus (false); addAndMakeVisible (*b); }
+    remoteBtn = std::make_unique<IconButton> (U ("Télécommande (téléphone)"), icons::phone());
+    remoteBtn->onClick = [this] { ctx.perform ("studio.remote"); };
+    addAndMakeVisible (*remoteBtn);
     styleButton (searchBtn);
     searchBtn.setColour (juce::TextButton::textColourOffId, theme::muted);
     searchBtn.onClick = [this] { ctx.perform ("palette.open"); };
@@ -229,17 +248,26 @@ void ToolbarPanel::syncTools()
 
 void ToolbarPanel::timerCallback()
 {
-    for (int i = 0; i < 3; ++i) zoneBtns[i]->active = isZoneVisible && isZoneVisible (i);
+    for (int i = 0; i < 3; ++i) zoneBtns[i]->setActive (isZoneVisible && isZoneVisible (i));
     if (ctx.edit != nullptr)
     {
         auto& t = ctx.edit->getTransport();
-        transportBtns[3]->active = t.looping.get();
-        transportBtns[5]->active = t.isPlaying() && ! t.isRecording();
-        transportBtns[6]->active = t.isRecording();
+        transportBtns[3]->setActive (t.looping.get());
+        transportBtns[5]->setActive (t.isPlaying() && ! t.isRecording());
+        transportBtns[6]->setActive (t.isRecording());
     }
-    for (auto* b : zoneBtns) b->repaint();
-    for (auto* b : transportBtns) b->repaint();
-    repaint (titleX, 0, juce::jmax (0, searchBtn.getX() - titleX), getHeight());
+    // Télécommande : allumée si active ; voyant vert si un téléphone s'est manifesté il y a moins de 3 s.
+    const int rs = remoteState ? remoteState() : 0;
+    remoteBtn->setActive (rs > 0);
+    if (rs != shownRemoteState)
+    {
+        shownRemoteState = rs;
+        remoteBtn->setTooltip (rs == 2 ? U ("Télécommande : téléphone connecté") : rs == 1 ? U ("Télécommande active (en attente d'un téléphone)")
+                                                                                : U ("Télécommande (téléphone)"));
+        repaint (remoteBtn->getBounds().expanded (2));
+    }
+    // Titre (nom du projet, « copie de secours il y a … ») : une fois par seconde suffit.
+    if (++tick % 15 == 0) repaint (titleX, 0, juce::jmax (0, searchBtn.getX() - titleX), getHeight());
 }
 
 void ToolbarPanel::resized()
@@ -258,6 +286,9 @@ void ToolbarPanel::resized()
     gridBox.setBounds (r.removeFromLeft (80).reduced (0, 2)); r.removeFromLeft (30);
     quantBox.setBounds (r.removeFromLeft (64).reduced (0, 2)); r.removeFromLeft (12);
     searchBtn.setBounds (r.removeFromRight (170).reduced (0, 2));
+    r.removeFromRight (6);
+    remoteBtn->setBounds (r.removeFromRight (bw));
+    r.removeFromRight (8);
     titleX = r.getX();
 }
 
@@ -275,9 +306,21 @@ void ToolbarPanel::paint (juce::Graphics& g)
     // Titre du projet + état de sauvegarde.
     if (getProjectTitle)
     {
-        auto area = juce::Rectangle<int> (titleX, 0, searchBtn.getX() - titleX - 12, getHeight());
+        auto area = juce::Rectangle<int> (titleX, 0, remoteBtn->getX() - titleX - 4, getHeight());
         g.setColour (theme::text); g.setFont (theme::ui (13.0f, true));
         g.drawText (getProjectTitle(), area, juce::Justification::centredRight, true);
+    }
+}
+
+void ToolbarPanel::paintOverChildren (juce::Graphics& g)
+{
+    // Voyant « téléphone connecté » sur le bouton de la télécommande.
+    if (shownRemoteState == 2)
+    {
+        auto b = remoteBtn->getBounds().toFloat();
+        const juce::Rectangle<float> dot (b.getRight() - 9.0f, b.getY() + 1.0f, 8.0f, 8.0f);
+        g.setColour (theme::panel); g.fillEllipse (dot.expanded (1.5f));
+        g.setColour (theme::play); g.fillEllipse (dot);
     }
 }
 
@@ -1013,17 +1056,18 @@ void TransportPanel::timerCallback()
 {
     if (ctx.edit == nullptr) return;
     auto& t = ctx.edit->getTransport();
-    buttons[4]->active = t.looping.get();
-    buttons[6]->active = t.isPlaying() && ! t.isRecording();
-    buttons[7]->active = t.isRecording();
-    clickBtn->active = ctx.edit->clickTrackEnabled.get();
-    punchInBtn->active = ctx.edit->recordingPunchInOut.get();
-    for (auto* b : buttons) b->repaint();
-    clickBtn->repaint(); punchInBtn->repaint();
+    buttons[4]->setActive (t.looping.get());
+    buttons[6]->setActive (t.isPlaying() && ! t.isRecording());
+    buttons[7]->setActive (t.isRecording());
+    clickBtn->setActive (ctx.edit->clickTrackEnabled.get());
+    punchInBtn->setActive (ctx.edit->recordingPunchInOut.get());
 
     const auto lv = master.read();
     outMeter.setLevels (lv.first, lv.second);
-    repaint (perfArea); repaint (locL); repaint (locR); repaint (display); repaint (tempoArea); repaint (sigArea);
+    // Compteur : à chaque image tant que la position change ; délimiteurs, tempo, signature, charge : 2 fois/s.
+    const double pos = t.getPosition().inSeconds();
+    if (pos != shownPosition) { shownPosition = pos; repaint (display); }
+    if (++tick % 12 == 0) { repaint (perfArea); repaint (locL); repaint (locR); repaint (tempoArea); repaint (sigArea); repaint (display); }
 }
 
 void TransportPanel::resized()

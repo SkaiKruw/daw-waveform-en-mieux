@@ -132,7 +132,10 @@ public:
         }
         if (masterTap) { const auto lv = masterTap->read(); meter.setLevels (lv.first, lv.second); }
         else meter.setLevels (client.getAndClearAudioLevel (0).dB, client.getAndClearAudioLevel (1).dB);
-        repaint (valueArea);
+        // Valeurs (volume, crête) : redessinées seulement si le texte affiché change.
+        const double db = volumePlugin ? volumePlugin->getVolumeDb() : 0.0;
+        const int key = juce::roundToInt (db * 10.0) * 100000 + juce::roundToInt (juce::jmax (-100.0f, meter.getPeak()) * 10.0f);
+        if (key != shownValueKey) { shownValueKey = key; repaint (valueArea); }
     }
 
     void resized() override
@@ -243,6 +246,7 @@ private:
     te::LevelMeasurer::Client client;
     std::unique_ptr<MasterLevelTap> masterTap;
     juce::Rectangle<int> nameArea, valueArea, scaleArea;
+    int shownValueKey = -1;
     int insertsTop = 0;
 };
 

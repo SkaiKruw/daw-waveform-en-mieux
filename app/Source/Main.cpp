@@ -8,6 +8,7 @@
 #include "DemoContent.h"
 #include "StudioLookAndFeel.h"
 #include "Exporter.h"
+#include "Profiler.h"
 
 namespace
 {
@@ -358,6 +359,15 @@ public:
             });
             return;
         }
+        if (args[0] == "--perf-test")
+        {
+            juce::MessageManager::callAsync ([this, dir = juce::File::getCurrentWorkingDirectory().getChildFile (args[1].isEmpty() ? "perf-test" : args[1].unquoted())]
+            {
+                setApplicationReturnValue (runPerfTest (dir));
+                quit();
+            });
+            return;
+        }
         if (args[0] == "--live-test")
         {
             juce::MessageManager::callAsync ([this, dir = juce::File::getCurrentWorkingDirectory().getChildFile (args[1].isEmpty() ? "live-test" : args[1].unquoted())]
@@ -591,6 +601,89 @@ private:
     }
 
     // Lecture réelle sur la carte son : la tête avance, du son sort, la vue suit.
+    // Mesure de fluidité : gros projet joué sur la carte son, une phase par vue ; temps CPU du fil de
+    // l'interface, du processus et charge audio, plus les fonctions les plus coûteuses de l'interface.
+    int runPerfTest (const juce::File& dir)
+    {
+        dir.createDirectory();
+        std::printf ("\nMesure de fluidité\n\n");
+        auto content = std::make_unique<MainComponent> (*engine, *catalog);
+        auto* m = content.get();
+        window = std::make_unique<MainWindow> (std::move (content));
+        openDemo (*m);
+        pump (1500);
+        auto& ctx = m->getContext();
+        auto& edit = *m->getEdit();
+        // Projet de 64 mesures : chaque événement est recopié toutes les 8 mesures, puis chaque piste x4.
+        const double bars8 = 8 * demo::barSeconds();
+        for (auto* t : te::getAudioTracks (edit))
+        {
+            const auto clips = t->getClips();
+            for (auto* c : clips)
+                for (int k = 1; k < 8; ++k)
+                {
+                    const auto pos = c->getPosition();
+                    const te::TimeRange r { pos.getStart() + te::TimeDuration::fromSeconds (k * bars8), pos.getEnd() + te::TimeDuration::fromSeconds (k * bars8) };
+                    if (auto* w = dynamic_cast<te::WaveAudioClip*> (c))
+                        t->insertWaveClip (w->getName(), AudioEditorView::sourceFileOf (*w), { r, pos.getOffset() }, false);
+                    else if (auto* mc = dynamic_cast<te::MidiClip*> (c))
+                        if (auto nc = t->insertMIDIClip (mc->getName(), r, nullptr)) nc->getSequence().copyFrom (mc->getSequence(), nullptr);
+                }
+        }
+        const auto originals = te::getAudioTracks (edit);
+        for (auto* t : originals)
+            if (! t->getClips().isEmpty())
+                for (int k = 0; k < 3; ++k) { ctx.selectTrack (t); ctx.perform ("track.duplicate"); }
+        edit.getUndoManager().clearUndoHistory();
+        ctx.perform ("view.zoomFit");
+        EditContext::prepareAudioProxies (edit, 60000);
+        pump (1000);
+        int clipCount = 0;
+        for (auto* t : te::getAudioTracks (edit)) clipCount += t->getClips().size();
+        std::printf ("  projet : %d pistes, %d événements, %.0f s\n\n", te::getAudioTracks (edit).size(), clipCount, edit.getLength().inSeconds());
+
+        te::Clip* aMidi = nullptr; te::Clip* aWave = nullptr;
+        for (auto* t : te::getAudioTracks (edit))
+            for (auto* c : t->getClips())
+            {
+                if (aMidi == nullptr && dynamic_cast<te::MidiClip*> (c)) aMidi = c;
+                if (aWave == nullptr && dynamic_cast<te::WaveAudioClip*> (c)) aWave = c;
+            }
+
+        auto& dm = engine->getDeviceManager();
+        edit.getTransport().setPosition (te::TimePosition());
+        m->getContext().findAction ("transport.play")->perform();
+        pump (800);
+        struct Phase { const char* name; std::function<void()> setup; };
+        const Phase phases[] = {
+            { "Fenêtre de projet seule",        [&] { m->showView (0); ctx.perform ("view.arrangement"); } },
+            { "Projet + MixConsole",            [&] { m->showView (1); } },
+            { "Projet + éditeur de notes",      [&] { ctx.selectClip (aMidi); m->showView (2); } },
+            { "Projet + éditeur audio",         [&] { ctx.selectClip (aWave); m->showView (3); } },
+        };
+        const bool profile = juce::SystemStats::getEnvironmentVariable ("ONDE_PERF_PROFILE", {}).isNotEmpty();
+        for (auto& ph : phases)
+        {
+            ph.setup();
+            pump (600);
+            SamplingProfiler prof;
+            if (profile) prof.start();
+            const double t0 = juce::Time::getMillisecondCounterHiRes() / 1000.0, ui0 = threadCpuSeconds(), p0 = processCpuSeconds();
+            double audio = 0; int n = 0;
+            for (int i = 0; i < 60; ++i) { pump (100); audio += dm.getCpuUsage(); ++n; }
+            const double wall = juce::Time::getMillisecondCounterHiRes() / 1000.0 - t0;
+            const auto report = profile ? prof.stop (60) : juce::String();
+            std::printf ("  %-30s interface %5.1f %% d'un cœur · processus %5.1f %% · audio %4.1f %%\n", ph.name,
+                         100.0 * (threadCpuSeconds() - ui0) / wall, 100.0 * (processCpuSeconds() - p0) / wall, 100.0 * audio / n);
+            if (profile) std::printf ("%s\n", report.toRawUTF8());
+            std::fflush (stdout);
+            snapshot (*m, dir.getChildFile (juce::String ("perf-") + juce::String (&ph - phases) + ".png"));
+        }
+        m->getContext().findAction ("transport.play")->perform();
+        pump (300);
+        return 0;
+    }
+
     int runLiveTest (const juce::File& dir)
     {
         dir.createDirectory();
@@ -1316,6 +1409,7 @@ private:
             bool hasPlay = false, hasQuit = false;
             for (int i = 0; i < actions.size(); ++i) { hasPlay |= actions[i]["id"] == juce::var ("transport.play"); hasQuit |= actions[i]["id"] == juce::var ("file.quit"); }
             check (hasPlay && ! hasQuit, U ("liste des commandes pour les boutons perso (") + juce::String (actions.size()) + U (", sans « Quitter »)"));
+            check (remote.phoneConnected(), U ("la barre d'outils voit le téléphone connecté (voyant vert)"));
             const bool loopBefore = e2.getTransport().looping.get();
             request ("/api/action?id=transport.loop&" + k, true, st);
             pump (300);

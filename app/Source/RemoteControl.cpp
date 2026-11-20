@@ -217,7 +217,7 @@ bool RemoteControl::checkCode (const juce::StringPairArray& query, int& status)
 {
     const auto now = juce::Time::getMillisecondCounter();
     if (now < lockedUntil) { status = 429; return false; }
-    if (query["k"] == code && code.isNotEmpty()) { badAttempts = 0; return true; }
+    if (query["k"] == code && code.isNotEmpty()) { badAttempts = 0; lastClientMs = now; return true; }
     if (++badAttempts >= 10) { lockedUntil = now + 30000; badAttempts = 0; }
     status = 403;
     return false;

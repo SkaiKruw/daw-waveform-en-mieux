@@ -486,3 +486,30 @@ void PianoRollView::quantise()
     if (ctx.setStatus) ctx.setStatus (U ("Notes quantifiées sur la grille"));
     ctx.changed();
 }
+
+float PianoRollView::cursorX() const
+{
+    auto* mc = ctx.getSelectedMidiClip();
+    if (mc == nullptr || ctx.edit == nullptr) return -1.0f;
+    const double t = ctx.edit->getTransport().getPosition().inSeconds();
+    const float x = beatToX (mc->getContentBeatAtTime (te::TimePosition::fromSeconds (t)).inBeats());
+    const auto grid = gridArea();
+    return x >= (float) grid.getX() && x <= (float) grid.getRight() ? x : -1.0f;
+}
+
+void PianoRollView::timerCallback()
+{
+    // Redessin complet si les notes, la vue ou la souris bougent (et 2 fois par seconde par sécurité) ;
+    // sinon seule la tête de lecture est redessinée.
+    if (! isVisible()) return;
+    watcher.watch (ctx.edit);
+    const bool moved = viewBeat != lastViewBeat || pxPerBeat != lastPxPerBeat;
+    if (watcher.consumeDirty() || moved || isMouseButtonDown (true) || ++tick % 10 == 0)
+    {
+        lastViewBeat = viewBeat; lastPxPerBeat = pxPerBeat;
+        lastCursorX = -1.0f;
+        repaint();
+        return;
+    }
+    repaintCursorStrip (*this, lastCursorX, cursorX(), 0, getHeight());
+}

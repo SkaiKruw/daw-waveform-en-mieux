@@ -18,6 +18,8 @@ public:
     void stop();
     bool isRunning() const                    { return isThreadRunning(); }
     int getPort() const                       { return port; }
+    // Un téléphone a interrogé la télécommande (code valide) il y a moins de 3 s.
+    bool phoneConnected() const               { return isRunning() && juce::Time::getMillisecondCounter() - lastClientMs.load() < 3000; }
     juce::String getCode() const              { return code; }
 
     struct Address { juce::String url, label; };
@@ -50,6 +52,7 @@ private:
     juce::CriticalSection stateLock;
     juce::String stateJson { "{}" }, actionsJson { "[]" };
     std::shared_ptr<int> alive = std::make_shared<int> (0);   // les appels différés vérifient que la télécommande existe encore
+    std::atomic<juce::uint32> lastClientMs { 0 };
     int badAttempts = 0;
     juce::uint32 lockedUntil = 0;
 };

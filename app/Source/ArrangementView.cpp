@@ -35,10 +35,20 @@ namespace
 
     juce::File sourceFile (te::WaveAudioClip& c)
     {
-        auto f = c.getOriginalFile();
+        // Résolution mise en cache : interroger le disque (3 tests d'existence) à chaque dessin de chaque
+        // événement coûtait ~15 % du fil de l'interface en lecture. Revérifiée toutes les 3 s.
+        struct Resolved { juce::File file; juce::uint32 checkedAt = 0; };
+        static std::unordered_map<juce::String, Resolved> resolved;
+        const auto original = c.getOriginalFile();
+        const auto key = original.getFullPathName();
+        const auto now = juce::Time::getMillisecondCounter();
+        auto it = resolved.find (key);
+        if (it != resolved.end() && now - it->second.checkedAt < 3000) return it->second.file;
+        auto f = original;
         if (! f.existsAsFile()) f = c.getAudioFile().getFile();
         if (! f.existsAsFile() && c.edit.editFileRetriever)     // repli : à côté du fichier du projet
-            f = c.edit.editFileRetriever().getSiblingFile (c.getOriginalFile().getFileName());
+            f = c.edit.editFileRetriever().getSiblingFile (original.getFileName());
+        resolved[key] = { f, now };
         return f;
     }
 
@@ -230,6 +240,9 @@ public:
         const float l = client.getAndClearAudioLevel (0).dB, r = client.getAndClearAudioLevel (1).dB;
         const float v = juce::jmax (l, r);
         level = v > level ? v : juce::jmax (-100.0f, level - 2.0f);
+        // Seul le vumètre est redessiné, et seulement s'il a bougé d'au moins un pixel.
+        const int px = juce::roundToInt (juce::jlimit (0.0f, 1.0f, (level + 60.0f) / 66.0f) * (float) getHeight());
+        if (px != drawnMeterPx) { drawnMeterPx = px; repaint (ArrangementView::headerW - 11, 0, 7, getHeight()); }
     }
 
     void resized() override
@@ -253,7 +266,9 @@ public:
         const bool selected = ctx.selectedTrackID == track.itemID;
         auto header = juce::Rectangle<int> (0, 0, headerW, h);
 
-        // En-tête de piste.
+        // En-tête de piste (sauté si la zone à redessiner est entièrement à droite : tête de lecture).
+        if (g.getClipBounds().getX() < headerW)
+        {
         g.setColour (selected ? juce::Colour (0xff4a5058) : theme::header); g.fillRect (header);
         if (selected) { g.setColour (theme::accent.withAlpha (0.25f)); g.fillRect (header.withWidth (headerW).withHeight (1)); }
         // Retrait des pistes rangées dans un dossier (un filet par niveau).
@@ -301,6 +316,7 @@ public:
             g.fillRect (m.withTop (m.getBottom() - n * m.getHeight()));
         }
         g.setColour (theme::line); g.drawVerticalLine (headerW - 1, 0.0f, (float) getHeight());
+        }
 
         // Zone des événements.
         auto lane = juce::Rectangle<int> (headerW, 0, getWidth() - headerW, h);
@@ -310,7 +326,14 @@ public:
         g.saveState();
         g.reduceClipRegion (lane);
         const bool dim = hasFailure();
-        for (auto* clip : track.getClips()) paintClip (g, *clip, lane, col, dim);
+        // Seuls les événements qui touchent la zone à redessiner sont dessinés.
+        const auto dirty = g.getClipBounds();
+        for (auto* clip : track.getClips())
+        {
+            const float cx0 = owner.timeToX (clip->getPosition().getStart().inSeconds()), cx1 = owner.timeToX (clip->getPosition().getEnd().inSeconds());
+            if (cx1 < (float) dirty.getX() - 2.0f || cx0 > (float) dirty.getRight() + 2.0f) continue;
+            paintClip (g, *clip, lane, col, dim);
+        }
         if (drawPreview.getLength() > 0)
         {
             const float x0 = owner.timeToX (drawPreview.getStart()), x1 = owner.timeToX (drawPreview.getEnd());
@@ -1004,6 +1027,7 @@ private:
     te::Plugin::Ptr meterPlugin;
     te::LevelMeasurer::Client client;
     float level = -100.0f;
+    int drawnMeterPx = -1;
 };
 
 //==============================================================================
@@ -1387,6 +1411,7 @@ ArrangementView::ArrangementView (EditContext& c) : ctx (c)
 
 ArrangementView::~ArrangementView()
 {
+    if (watchedState.isValid()) watchedState.removeListener (this);
     ctx.removeChangeListener (this);
     hbar.removeListener (this);
     rows.clear();
@@ -1633,8 +1658,50 @@ void ArrangementView::timerCallback()
         if (timeToX (t) > (float) getWidth() - 20 || t < viewStart) { viewStart = juce::jmax (0.0, t - visible * 0.05); updateScrollBar(); }
     }
     if (frame % 15 == 0) updateScrollBar();
-    repaint (0, 0, getWidth(), rulerH);
-    holder->repaint();
+    watchEdit();
+
+    // Pistes : redessinées si le projet a changé, pendant un enregistrement (prise qui grandit), après un
+    // défilement ou un zoom, et deux fois par seconde par sécurité. Le reste du temps, rien.
+    const bool recording = ctx.edit != nullptr && ctx.edit->getTransport().isRecording();
+    const bool moved = viewStart != lastViewStart || pxPerSecond != lastPxPerSecond;
+    if (contentDirty || recording || moved || frame % 15 == 0)
+    {
+        contentDirty = false;
+        lastViewStart = viewStart; lastPxPerSecond = pxPerSecond;
+        repaint();
+        holder->repaint();
+        lastCursorX = -1.0f;
+    }
+    // Tête de lecture : seulement les bandes de l'ancienne et de la nouvelle position.
+    if (ctx.edit != nullptr)
+    {
+        const float x = timeToX (ctx.edit->getTransport().getPosition().inSeconds());
+        if (std::abs (x - lastCursorX) >= 0.5f)
+        {
+            if (lastCursorX >= 0.0f) repaint (juce::Rectangle<int> ((int) lastCursorX - 8, 0, 18, getHeight()));
+            repaint (juce::Rectangle<int> ((int) x - 8, 0, 18, getHeight()));
+            lastCursorX = x;
+        }
+    }
+}
+
+void ArrangementView::valueTreePropertyChanged (juce::ValueTree& tree, const juce::Identifier& id)
+{
+    // La position de lecture et les réglages de transport changent sans cesse : pas de redessin pour eux.
+    if (tree.hasType (te::IDs::TRANSPORT)) return;
+    static const bool traceDirty = juce::SystemStats::getEnvironmentVariable ("ONDE_DIRTY_TRACE", {}).isNotEmpty();
+    if (traceDirty) { std::printf ("redessin demandé par %s.%s\n", tree.getType().toString().toRawUTF8(), id.toString().toRawUTF8()); std::fflush (stdout); }
+    contentDirty = true;
+}
+
+void ArrangementView::watchEdit()
+{
+    if (ctx.edit == watchedEdit) return;
+    if (watchedState.isValid()) watchedState.removeListener (this);
+    watchedEdit = ctx.edit;
+    watchedState = ctx.edit != nullptr ? ctx.edit->state : juce::ValueTree();
+    if (watchedState.isValid()) watchedState.addListener (this);
+    contentDirty = true;
 }
 
 void ArrangementView::paint (juce::Graphics& g)

@@ -206,12 +206,32 @@ void AudioEditorView::syncControls()
 
 void AudioEditorView::changeListenerCallback (juce::ChangeBroadcaster*) { repaint(); }
 
+float AudioEditorView::cursorX() const
+{
+    auto* c = clip();
+    if (c == nullptr || ctx.edit == nullptr) return -1.0f;
+    const double s = clipFileStart(), e = clipFileEnd();
+    const double ratio = juce::jmax (0.0001, c->getSpeedRatio());
+    const double ft = s + (ctx.edit->getTransport().getPosition().inSeconds() - c->getPosition().getStart().inSeconds()) * ratio;
+    return ft >= s && ft <= e ? fileTimeToX (ft) : -1.0f;
+}
+
 void AudioEditorView::timerCallback()
 {
     if (! isVisible()) return;
     frameClip();
     syncControls();
-    repaint();
+    // Redessin complet si l'événement, la vue ou la souris bougent (et 2 fois par seconde) ; sinon la tête seule.
+    watcher.watch (ctx.edit);
+    const bool moved = viewStart != lastViewStart || viewLength != lastViewLength || framedClip != lastFramed;
+    if (watcher.consumeDirty() || moved || isMouseButtonDown (true) || ++tick % 10 == 0)
+    {
+        lastViewStart = viewStart; lastViewLength = viewLength; lastFramed = framedClip;
+        lastCursorX = -1.0f;
+        repaint();
+        return;
+    }
+    repaintCursorStrip (*this, lastCursorX, cursorX(), toolbarH, getHeight());
 }
 
 juce::Rectangle<int> AudioEditorView::waveArea() const

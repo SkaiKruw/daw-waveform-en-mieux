@@ -15,6 +15,7 @@ public:
     }
     bool active = false;                    // allumé (indépendamment du clic)
     bool flat = false;                      // sans fond quand éteint
+    void setActive (bool a)                 { if (a != active) { active = a; repaint(); } }   // redessin seulement si l'état change
     void paintButton (juce::Graphics&, bool over, bool down) override;
 private:
     Painter painter;
@@ -69,6 +70,7 @@ public:
 private:
     bool isVertical;
     float levels[2] { -100.0f, -100.0f }, peak[2] { -100.0f, -100.0f };
+    int drawn[4] { -1, -1, -1, -1 };          // dernières hauteurs dessinées (pixels)
 };
 
 //==============================================================================
@@ -81,6 +83,8 @@ public:
     void paint (juce::Graphics&) override;
     std::function<bool (int)> isZoneVisible;
     std::function<juce::String()> getProjectTitle;
+    std::function<int()> remoteState;                // 0 coupée, 1 active, 2 téléphone connecté
+    void paintOverChildren (juce::Graphics&) override;
 private:
     void timerCallback() override;
     void changeListenerCallback (juce::ChangeBroadcaster*) override { syncTools(); }
@@ -88,9 +92,12 @@ private:
     EditContext& ctx;
     juce::OwnedArray<IconButton> zoneBtns, transportBtns, toolBtns;
     std::unique_ptr<IconButton> snapBtn;
+    std::unique_ptr<IconButton> remoteBtn;
+    int shownRemoteState = -1;
     juce::ComboBox gridBox, quantBox;
     juce::TextButton searchBtn { U ("Rechercher  Ctrl+K") };
     int toolsX = 0, snapX = 0, titleX = 0;
+    int tick = 0;
 };
 
 //==============================================================================
@@ -200,6 +207,8 @@ private:
     StereoMeter outMeter { false };
     MasterLevelTap master { ctx };
     juce::Rectangle<int> perfArea, locL, locR, display, tempoArea, sigArea;
+    int tick = 0;
+    double shownPosition = -1.0;
     double dragTempo = 0.0;
     bool draggingTempo = false;
 };

@@ -7,7 +7,8 @@ class ArrangementView  : public juce::Component,
                          public juce::FileDragAndDropTarget,
                          private juce::Timer,
                          private juce::ChangeListener,
-                         private juce::ScrollBar::Listener
+                         private juce::ScrollBar::Listener,
+                         private juce::ValueTree::Listener
 {
 public:
     explicit ArrangementView (EditContext&);
@@ -52,6 +53,18 @@ private:
     void timerCallback() override;
     void changeListenerCallback (juce::ChangeBroadcaster*) override;
     void scrollBarMoved (juce::ScrollBar*, double newRangeStart) override;
+    // Redessin ciblé : les pistes ne sont redessinées que si le projet change (arbre de l'edit, contexte)
+    // ou pendant un enregistrement ; la tête de lecture ne redessine que deux bandes étroites.
+    void valueTreePropertyChanged (juce::ValueTree&, const juce::Identifier&) override;
+    void valueTreeChildAdded (juce::ValueTree&, juce::ValueTree&) override         { contentDirty = true; }
+    void valueTreeChildRemoved (juce::ValueTree&, juce::ValueTree&, int) override  { contentDirty = true; }
+    void valueTreeChildOrderChanged (juce::ValueTree&, int, int) override          { contentDirty = true; }
+    void watchEdit();
+    juce::ValueTree watchedState;
+    te::Edit* watchedEdit = nullptr;
+    bool contentDirty = true;
+    float lastCursorX = -1.0f;
+    double lastViewStart = -1.0, lastPxPerSecond = -1.0;
     void rebuildRows();
     void layoutRows();
     void updateScrollBar();

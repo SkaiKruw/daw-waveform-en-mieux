@@ -124,6 +124,8 @@ private:
     RemoteControl remote { ctx };                       // télécommande depuis un téléphone
     juce::Component::SafePointer<juce::DialogWindow> remoteWindow;
     juce::String status;
+    juce::String paintedStatus;
+    int statusTick = 0;
     juce::Time statusTime, lastAutosave;
     std::unique_ptr<juce::FileChooser> chooser;
 
