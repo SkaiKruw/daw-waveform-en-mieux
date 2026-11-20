@@ -20,6 +20,18 @@ Visual Studio 2022 (MSVC). Application de bureau Windows (macOS et Linux pas enc
 
 Le dépôt ne contient que les sources : `build-windows\` et `deps\` (≈ 1,5 Go avec les modèles) sont recréés par le script.
 
+## Installateur
+
+Après une compilation : `powershell -File windows\creer-installateur.ps1` (option `-SansModeles` : sans les modèles du
+séparateur, ≈ 23 Mo au lieu de ≈ 320 Mo). Produit dans `build-windows\installateur\` :
+
+- `Onde-Setup-<version>.exe` : installateur (IExpress, intégré à Windows). Installe pour l'utilisateur courant, sans droits
+  administrateur, dans `%LOCALAPPDATA%\Programs\Onde`, avec raccourcis (menu Démarrer, Bureau) et entrée dans
+  Paramètres › Applications (désinstallation qui conserve projets et réglages). Le runtime Visual C++ est embarqué.
+- `Onde-<version>-portable.zip` : le même programme, à décompresser n'importe où.
+
+L'installateur n'est pas signé : Windows SmartScreen peut demander « Exécuter quand même ».
+
 ## La fenêtre de projet
 
 | Zone | Contenu |
@@ -52,6 +64,7 @@ Le dépôt ne contient que les sources : `build-windows\` et `deps\` (≈ 1,5 Go
 - **Télécommande sur téléphone** (Studio › Télécommande (téléphone)…, ou bouton téléphone de la barre d'outils, allumé quand la télécommande est active, avec un voyant vert quand un téléphone est connecté) : le téléphone devient un Stream Deck pour Onde. Activez la télécommande, scannez le QR code (même Wi-Fi que le PC, ou Tailscale) : grille de gros boutons avec retour haptique, compteur, tempo et état (lecture, enregistrement, cycle). Pages Transport (lecture, stop, enregistrer, mesure ±1, cycle, métronome, punch, repères), Édition (annuler, rétablir, enregistrer, couper, dupliquer, quantifier, calage, MixConsole…), Pistes (sélection, muet, solo, armement) et Perso : 12 boutons à composer parmi toutes les commandes d'Onde (réglage gardé sur le téléphone). « Ajouter à l'écran d'accueil » l'ouvre comme une application. Sécurité : désactivée par défaut, code d'appairage à 6 chiffres renouvelé à chaque activation, blocage 30 s après 10 codes faux, commandes de fichier et « Quitter » non exposées. Au premier lancement, Windows demande d'autoriser Onde sur les réseaux privés.
 - **Fluidité** : les vues ne se redessinent que lorsque le projet change ; pendant la lecture, seules la tête de lecture, les compteurs et les vumètres qui bougent sont redessinés, et seuls les événements visibles dans la zone à redessiner sont dessinés.
 - **Écran d'accueil** (au démarrage, ou Fichier › Écran d'accueil, Ctrl+Maj+H) : modèles de projet (vide, Enregistrement : voix, guitare, basse, batterie et réverbération ; Production : basse, accords et lead au synthé, voix et réverbération ; Démonstration), projets récents (double-clic pour rouvrir), Ouvrir…, et « Afficher au démarrage » à décocher.
+- **Projet neuf** : un projet créé ou ouvert n'est pas marqué « modifié » tant que vous n'y touchez pas (pas de question inutile à la fermeture).
 - **Plantage** : si Onde s'arrête brutalement, la pile d'appels est écrite dans `%APPDATA%\Onde\plantage.txt` (diagnostic).
 - **Logo** : une onde dont l'amplitude enfle puis s'éteint, en ruban effilé bleu → turquoise (`app/Resources/logo.svg`, vectoriel). Icône de l'application (générée par `Onde --render-logo <dossier>`, PNG de 16 à 1024 px), fenêtre « À propos », barre d'outils, et page du téléphone (icône d'onglet et d'écran d'accueil).
 - Toutes les commandes : Ctrl+K (recherche) et F1 (liste des raccourcis).
