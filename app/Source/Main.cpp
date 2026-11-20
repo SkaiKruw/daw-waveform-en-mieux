@@ -1804,6 +1804,86 @@ private:
                 if (auto e = ondefx::createEditor (*lim)) { pump (200); snapshot (*e, dir.getChildFile ("16-onde-limiteur.png")); }
                 limPtr->deleteFromParent();
             }
+
+            // Modulateurs : un LFO carré à 2 Hz sur le volume fait alterner le niveau (trémolo) au rendu.
+            for (auto* c : t->getClips()) c->removeFromParent();
+            t->insertWaveClip ("modulation", tones, { { te::TimePosition(), te::TimePosition::fromSeconds (4.0) }, te::TimeDuration() }, false);
+            // Niveau (dB) de chaque tranche de 20 ms entre 1 et 3 s : écart entre la plus forte et la plus faible.
+            auto swingDb = [] (const juce::AudioBuffer<float>& b)
+            {
+                float lo = 1.0e9f, hi = -1.0e9f;
+                for (int s = 48000; s + 960 <= std::min (b.getNumSamples(), 3 * 48000); s += 960)
+                {
+                    const float db = juce::Decibels::gainToDecibels (b.getRMSLevel (0, s, 960), -200.0f);
+                    lo = std::min (lo, db); hi = std::max (hi, db);
+                }
+                return hi - lo;
+            };
+            const double still = swingDb (renderTrack ("modulation-sans"));
+            auto lfo = ModulatorPanel::addModulator (*t, ModulatorPanel::Kind::lfo);
+            auto* lfoMod = dynamic_cast<te::LFOModifier*> (lfo.get());
+            check (lfoMod != nullptr && ModulatorPanel::describe (*lfo) == "LFO 1", U ("modulateur LFO ajouté à la piste (« ") + (lfo ? ModulatorPanel::describe (*lfo) : juce::String()) + U (" »)"));
+            if (lfoMod != nullptr)
+            {
+                lfoMod->waveParam->setParameter ((float) te::LFOModifier::waveSquare, juce::sendNotification);
+                lfoMod->rateParam->setParameter (2.0f, juce::sendNotification);
+                auto* vol = t->getVolumePlugin()->volParam.get();
+                auto assignment = ModulatorPanel::assign (*lfo, *vol, -0.3f);
+                const double moving = swingDb (renderTrack ("modulation-lfo"));
+                check (assignment != nullptr && still < 0.5 && moving > 6.0,
+                       U ("LFO carré 2 Hz sur le volume → le niveau varie de ") + juce::String (moving, 1) + U (" dB (sans modulateur : ") + juce::String (still, 2) + " dB)");
+
+                // Fenêtre des modulateurs : une carte par modulateur, avec son affectation.
+                ctx.selectTrack (t);
+                ctx.perform ("track.modulators");
+                pump (400);
+                ModulatorPanel* panel = nullptr;
+                for (int i = 0; i < juce::TopLevelWindow::getNumTopLevelWindows(); ++i)
+                    if (auto* dw = dynamic_cast<juce::DialogWindow*> (juce::TopLevelWindow::getTopLevelWindow (i)))
+                        if (auto* p = dynamic_cast<ModulatorPanel*> (dw->getContentComponent())) panel = p;
+                auto step = ModulatorPanel::addModulator (*t, ModulatorPanel::Kind::step);
+                pump (500);
+                check (panel != nullptr && panel->numCards() == 2 && step != nullptr && ModulatorPanel::describe (*step) == U ("Pas à pas 1"),
+                       U ("fenêtre des modulateurs : ") + juce::String (panel != nullptr ? panel->numCards() : -1) + U (" cartes (LFO, pas à pas)"));
+                if (panel != nullptr) snapshot (*panel, dir.getChildFile ("17-modulateurs.png"));
+
+                // Enregistrés avec le projet : modulateurs, réglages et affectation.
+                const auto saved = dir.getChildFile ("modulateurs.onde");
+                bool kept = false;
+                if (mc->saveProjectTo (saved))
+                    if (auto reopened = MainComponent::loadProject (*engine, saved))
+                    {
+                        for (auto* rt : te::getAudioTracks (*reopened))
+                            if (rt->getName() == t->getName())
+                                if (auto* list = rt->getModifierList())
+                                {
+                                    auto mods = list->getModifiers();
+                                    auto* rl = mods.size() == 2 ? dynamic_cast<te::LFOModifier*> (mods[0].get()) : nullptr;
+                                    auto assigned = rt->getVolumePlugin()->volParam->getAssignments();
+                                    kept = rl != nullptr && std::abs (rl->rateParam->getCurrentValue() - 2.0f) < 0.01f
+                                           && assigned.size() == 1 && std::abs (assigned[0]->value.get() + 0.3f) < 0.001f;
+                                }
+                        EditContext::destroyEdit (reopened);
+                    }
+                check (kept, U ("modulateurs, réglages et affectation enregistrés avec le projet"));
+
+                // Annuler : l'ajout du pas à pas, puis l'affectation du LFO.
+                auto& um = ed.getUndoManager();
+                const auto lastAction = um.getUndoDescription();
+                const bool historyNamed = um.getUndoDescriptions().contains (U ("Ajouter un modulateur (Pas à pas)"));
+                int undos = 0;
+                while (t->getModifierList()->getModifiers().size() > 1 && um.canUndo() && undos < 10) { um.undo(); ++undos; }
+                pump (300);
+                const bool lfoKept = t->getModifierList()->getModifiers().size() == 1 && vol->getAssignments().size() == 1;
+                while (vol->getAssignments().size() > 0 && um.canUndo() && undos < 20) { um.undo(); ++undos; }
+                pump (300);
+                check (lfoKept && historyNamed && vol->getAssignments().isEmpty() && panel != nullptr && panel->numCards() == 1,
+                       U ("annuler retire le pas à pas (le LFO et son affectation restent), puis l'affectation du LFO — dernière action : « ")
+                       + lastAction + U (" », ") + juce::String (undos) + U (" annulation(s)"));
+                if (panel != nullptr) if (auto* dw = panel->findParentComponentOfClass<juce::DialogWindow>()) delete dw;
+            }
+            for (auto* list = t->getModifierList(); list != nullptr && list->getModifiers().size() > 0;)
+                list->getModifiers()[0]->remove();
         }
 
         std::printf ("\n%s\n", failures == 0 ? "INTERFACE OK — toutes les vérifications passent." : "DES VÉRIFICATIONS ÉCHOUENT");

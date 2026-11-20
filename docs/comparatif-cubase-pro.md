@@ -50,7 +50,8 @@ que les utilisateurs mettent en avant dans les tests de logiciels et de plugins.
 | Compresseur, limiteur | ✅ | Onde Comp, Onde Limiteur |
 | Limiteur True Peak, mesure LUFS | 🟡 → ✅ | Onde Limiteur 2 (cette version) |
 | Bande de voie intégrée (EQ, comp, gate, saturation par voie) | ❌ | |
-| Modulateurs (LFO, enveloppe, pas à pas) sur n'importe quel paramètre | ❌ | priorité haute (nouveauté Cubase 14) |
+| Modulateurs (LFO, enveloppe, pas à pas) sur n'importe quel paramètre | ✅ | LFO, pas à pas, suiveur d'enveloppe, aléatoire ; profondeur par affectation |
+| Automation et modulation des paramètres des VST3 isolés | ❌ | priorité haute : exposer les paramètres du processus isolé |
 | Faders VCA | ❌ | |
 | Control Room | ❌ | |
 | Réverbération, delay, modulation, saturation de qualité | 🟡 | effets de base Tracktion ; versions Onde prévues |
@@ -70,7 +71,7 @@ que les utilisateurs mettent en avant dans les tests de logiciels et de plugins.
 ## Ordre de travail proposé
 
 1. Effets Onde 2 : EQ dynamique et M/S, compresseur complet, limiteur True Peak et LUFS (en cours).
-2. Modulateurs (LFO, enveloppe) sur les paramètres des effets et des pistes.
+2. ~~Modulateurs (LFO, enveloppe)~~ fait. Ensuite : paramètres des VST3 isolés (automation, modulation), automation de tous les paramètres dans la fenêtre de projet.
 3. Couloirs de contrôleurs MIDI dans l'éditeur de notes.
 4. Geler / rendre une piste sur place ; faders VCA.
 5. Couloirs de prises et comping.

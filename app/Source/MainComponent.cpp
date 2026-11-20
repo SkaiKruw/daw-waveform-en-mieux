@@ -110,6 +110,7 @@ MainComponent::~MainComponent()
     if (remoteWindow != nullptr) delete remoteWindow.getComponent();
     if (hubWindow != nullptr) delete hubWindow.getComponent();
     if (historyWindow != nullptr) delete historyWindow.getComponent();
+    if (modulatorWindow != nullptr) delete modulatorWindow.getComponent();
     for (auto& [id, w] : effectWindows) if (w != nullptr) delete w.getComponent();
     remote.stop();
     juce::Desktop::getInstance().removeFocusChangeListener (this);
@@ -385,6 +386,11 @@ void MainComponent::registerActions()
     ctx.addAction ("track.mute", U ("Piste : rendre muette"), "Projet", KP ('m'), [this] { if (auto* t = ctx.getSelectedTrack()) { t->setMute (! t->isMuted (false)); ctx.changed(); } })->separatorBefore = true;
     ctx.addAction ("track.solo", "Piste : solo", "Projet", KP ('s', shift, 0), [this] { if (auto* t = ctx.getSelectedTrack()) { t->setSolo (! t->isSolo (false)); ctx.changed(); } });
     ctx.addAction ("track.automation", U ("Piste : afficher l'automation"), "Projet", KP ('a'), [this] { if (auto* t = ctx.getSelectedTrack()) ctx.toggleAutomation (*t); });
+    ctx.addAction ("track.modulators", U ("Modulateurs de la piste (LFO, pas à pas, enveloppe)…"), "Projet", KP ('l', ctrl | shift, 0), [this]
+    {
+        if (modulatorWindow != nullptr) { modulatorWindow->toFront (true); return; }
+        modulatorWindow = ModulatorPanel::show (ctx);
+    });
     ctx.addAction ("track.prev", U ("Sélectionner la piste précédente"), "Projet", KP (KP::upKey), [this]
     {
         if (pianoRoll && pianoRoll->isVisible() && pianoRoll->getNumSelected() > 0) { pianoRoll->transposeSelected (1); return; }
@@ -1120,7 +1126,7 @@ int MainComponent::consolidateMedia (const juce::File& target)
                 folder.createDirectory();
                 auto dest = folder.getChildFile (f.getFileName());
                 if (! dest.existsAsFile() && ! f.copyFileTo (dest)) continue;
-                w->getSourceFileReference().setToFile (dest, te::SourceFileReference::PathStyle::chooseBest, false);
+                w->state.setProperty (te::IDs::source, dest.getFullPathName(), nullptr);   // hors historique : un « annuler » ne doit pas renvoyer vers le fichier temporaire
                 ++n;
             }
     return n;
@@ -1161,7 +1167,7 @@ bool MainComponent::saveProjectTo (const juce::File& target)
         for (auto* c : t->getClips())
             if (auto* w = dynamic_cast<te::WaveAudioClip*> (c))
                 if (auto src = w->getSourceFileReference().getFile(); src.existsAsFile())
-                    w->getSourceFileReference().setToFile (src, te::SourceFileReference::PathStyle::alwaysAbsolute, false);
+                    w->state.setProperty (te::IDs::source, src.getFullPathName(), nullptr);   // hors historique (l'enregistrement n'est pas une modification)
     edit->editFileRetriever = [f] { return f; };
     const int copied = consolidateMedia (f);
     const bool ok = te::EditFileOperations (*edit).writeToFile (f, false);

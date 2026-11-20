@@ -903,6 +903,7 @@ public:
         juce::PopupMenu m;
         m.addItem (1, "Renommer");
         m.addItem (2, U ("Afficher l'automation"), true, autoShown());
+        m.addItem (9, U ("Modulateurs de la piste…"));
         m.addSeparator();
         m.addItem (3, U ("Ajouter une piste audio"));
         m.addItem (4, U ("Ajouter une piste instrument"));
@@ -923,6 +924,7 @@ public:
             auto& um = ctx.edit->getUndoManager();
             if (r == 1) nameLabel.showEditor();
             if (r == 2) ctx.toggleAutomation (track);
+            if (r == 9) { ctx.selectTrack (&track); ctx.perform ("track.modulators"); }
             if (r == 3) ctx.perform ("track.addAudio");
             if (r == 4) ctx.perform ("track.addInst");
             if (r == 5) ctx.perform ("track.delete");
