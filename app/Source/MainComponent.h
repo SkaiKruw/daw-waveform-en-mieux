@@ -10,6 +10,7 @@
 #include "StemSeparator.h"
 #include "RemoteControl.h"
 #include "RemotePanel.h"
+#include "AboutPanel.h"
 #include "CommandPalette.h"
 #include "Panels.h"
 

@@ -18,16 +18,17 @@ target_link_libraries(onde-plugin-host PRIVATE onde_sandbox juce::juce_audio_pro
 juce_add_gui_app(Onde
     PRODUCT_NAME "Onde" COMPANY_NAME "Onde" BUNDLE_ID "fr.onde.prototype"
     MICROPHONE_PERMISSION_ENABLED TRUE MICROPHONE_PERMISSION_TEXT "Enregistrer une piste audio"
+    ICON_BIG "${CMAKE_CURRENT_SOURCE_DIR}/Resources/icon-1024.png" ICON_SMALL "${CMAKE_CURRENT_SOURCE_DIR}/Resources/icon-64.png"
     NEEDS_CURL FALSE NEEDS_WEB_BROWSER FALSE)
 juce_generate_juce_header(Onde)
 # Page de la télécommande (téléphone), embarquée dans l'exécutable.
-juce_add_binary_data(OndeData HEADER_NAME BinaryData.h NAMESPACE BinaryData SOURCES Resources/remote.html)
+juce_add_binary_data(OndeData HEADER_NAME BinaryData.h NAMESPACE BinaryData SOURCES Resources/remote.html Resources/logo.svg Resources/logo-192.png Resources/logo-32.png)
 target_compile_features(Onde PRIVATE cxx_std_20)
 target_sources(Onde PRIVATE
     Source/Main.cpp Source/MainComponent.cpp Source/SandboxPlugin.cpp Source/DemoContent.cpp
     Source/EditContext.cpp Source/PluginCatalog.cpp Source/ArrangementView.cpp Source/MixerView.cpp
     Source/PianoRollView.cpp Source/CommandPalette.cpp Source/Panels.cpp Source/AudioEditorView.cpp Source/Exporter.cpp Source/StemSeparator.cpp
-    Source/QrCode.cpp Source/RemoteControl.cpp Source/RemotePanel.cpp)
+    Source/QrCode.cpp Source/RemoteControl.cpp Source/RemotePanel.cpp Source/Logo.cpp Source/AboutPanel.cpp)
 target_compile_definitions(Onde PRIVATE ${ONDE_JUCE_DEFS})
 if(MSVC)
     # Symboles publics (noms de fonctions) pour les diagnostics, sans changer le code généré.

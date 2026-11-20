@@ -359,6 +359,30 @@ public:
             });
             return;
         }
+        if (args[0] == "--render-logo")
+        {
+            // Rend le logo (SVG embarqué) en PNG pour l'icône de l'application et la page du téléphone.
+            const auto dir = juce::File::getCurrentWorkingDirectory().getChildFile (args[1].isEmpty() ? "logo" : args[1].unquoted());
+            dir.createDirectory();
+            auto logo = theme::makeLogo();
+            int written = 0;
+            for (int size : { 1024, 512, 256, 192, 180, 128, 64, 48, 32, 16 })
+            {
+                juce::Image img (juce::Image::ARGB, size, size, true);
+                {
+                    juce::Graphics g (img);
+                    if (logo) logo->drawWithin (g, { 0.0f, 0.0f, (float) size, (float) size }, juce::RectanglePlacement::centred, 1.0f);
+                }
+                const auto f = dir.getChildFile ("logo-" + juce::String (size) + ".png");
+                f.deleteFile();
+                juce::FileOutputStream out (f);
+                if (out.openedOk() && juce::PNGImageFormat().writeImageToStream (img, out)) ++written;
+            }
+            std::printf ("%d images du logo écrites dans %s\n", written, dir.getFullPathName().toRawUTF8());
+            setApplicationReturnValue (written == 10 && logo != nullptr ? 0 : 1);
+            quit();
+            return;
+        }
         if (args[0] == "--perf-test")
         {
             juce::MessageManager::callAsync ([this, dir = juce::File::getCurrentWorkingDirectory().getChildFile (args[1].isEmpty() ? "perf-test" : args[1].unquoted())]
@@ -1396,6 +1420,8 @@ private:
             int st = 0;
             const auto page = request ("/", false, st);
             check (st == 200 && page.contains (U ("Télécommande")) && page.contains ("api/state"), U ("le téléphone reçoit la page de télécommande (") + juce::String (page.length()) + U (" caractères)"));
+            const auto png = request ("/logo-192.png", false, st);
+            check (st == 200, U ("la page reçoit le logo (icône d'écran d'accueil, réponse ") + juce::String (st) + ")");
             request ("/api/state", false, st);
             check (st == 403, U ("sans code d'appairage, l'API refuse (") + juce::String (st) + ")");
             const auto k = "k=" + remote.getCode();
@@ -1441,6 +1467,9 @@ private:
                 RemotePanel panel (remote);
                 pump (200);
                 snapshot (panel, dir.getChildFile ("10-telecommande.png"));
+                AboutPanel about;
+                snapshot (about, dir.getChildFile ("11-a-propos.png"));
+                check (theme::makeLogo() != nullptr, U ("le logo (SVG embarqué) se charge"));
             }
             remote.stop();
         }

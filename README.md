@@ -1,4 +1,6 @@
-# Onde — v0.4
+<img src="app/Resources/icon-1024.png" alt="Logo d'Onde" width="96">
+
+# Onde — v0.5
 
 Une station de travail audio (DAW) au fonctionnement et à l'apparence d'une station professionnelle de type Cubase,
 qui ne tombe pas quand un plugin plante : chaque plugin VST3 tourne dans son propre processus. S'il plante ou se bloque,
@@ -49,6 +51,7 @@ Le dépôt ne contient que les sources : `build-windows\` et `deps\` (≈ 1,5 Go
 - **Plugins** : VST3 isolés (◆) avec traitement anticipé (le plugin calcule un bloc d'avance, latence compensée automatiquement), transport transmis (tempo, signature, position, lecture, boucle), latence propre déclarée, mode hors temps réel pendant l'export ; effets intégrés (égaliseur, compresseur, réverbération, délai, chorus, phaser, passe-bas), synthé 4OSC.
 - **Télécommande sur téléphone** (Studio › Télécommande (téléphone)…, ou bouton téléphone de la barre d'outils, allumé quand la télécommande est active, avec un voyant vert quand un téléphone est connecté) : le téléphone devient un Stream Deck pour Onde. Activez la télécommande, scannez le QR code (même Wi-Fi que le PC, ou Tailscale) : grille de gros boutons avec retour haptique, compteur, tempo et état (lecture, enregistrement, cycle). Pages Transport (lecture, stop, enregistrer, mesure ±1, cycle, métronome, punch, repères), Édition (annuler, rétablir, enregistrer, couper, dupliquer, quantifier, calage, MixConsole…), Pistes (sélection, muet, solo, armement) et Perso : 12 boutons à composer parmi toutes les commandes d'Onde (réglage gardé sur le téléphone). « Ajouter à l'écran d'accueil » l'ouvre comme une application. Sécurité : désactivée par défaut, code d'appairage à 6 chiffres renouvelé à chaque activation, blocage 30 s après 10 codes faux, commandes de fichier et « Quitter » non exposées. Au premier lancement, Windows demande d'autoriser Onde sur les réseaux privés.
 - **Fluidité** : les vues ne se redessinent que lorsque le projet change ; pendant la lecture, seules la tête de lecture, les compteurs et les vumètres qui bougent sont redessinés, et seuls les événements visibles dans la zone à redessiner sont dessinés.
+- **Logo** : une onde dont l'amplitude enfle puis s'éteint, en ruban effilé bleu → turquoise (`app/Resources/logo.svg`, vectoriel). Icône de l'application (générée par `Onde --render-logo <dossier>`, PNG de 16 à 1024 px), fenêtre « À propos », barre d'outils, et page du téléphone (icône d'onglet et d'écran d'accueil).
 - Toutes les commandes : Ctrl+K (recherche) et F1 (liste des raccourcis).
 
 ## Tests automatiques

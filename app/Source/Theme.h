@@ -54,3 +54,10 @@ namespace theme
         g.setColour (line); g.drawRoundedRectangle (r, radius, 1.0f);
     }
 }
+
+// Logo d'Onde (Resources/logo.svg, embarqué) : dessiné vectoriellement à n'importe quelle taille.
+namespace theme
+{
+    std::unique_ptr<juce::Drawable> makeLogo();
+    void drawLogo (juce::Graphics&, juce::Rectangle<float> area);
+}

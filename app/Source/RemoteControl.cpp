@@ -186,6 +186,23 @@ void RemoteControl::serve (juce::StreamingSocket& s)
 
     int status = 400;
     juce::String type = "text/plain; charset=utf-8", body = "requete invalide";
+    // Images du logo (icône de l'onglet, de l'écran d'accueil, en-tête) : fichiers binaires, publics.
+    const auto path = target.upToFirstOccurrenceOf ("?", false, false);
+    struct Asset { const char* path; const char* data; int size; const char* type; };
+    const Asset assets[] = { { "/logo-192.png", BinaryData::logo192_png, BinaryData::logo192_pngSize, "image/png" },
+                             { "/logo-32.png",  BinaryData::logo32_png,  BinaryData::logo32_pngSize,  "image/png" },
+                             { "/logo.svg",     BinaryData::logo_svg,    BinaryData::logo_svgSize,    "image/svg+xml" } };
+    for (auto& a : assets)
+        if (path == a.path)
+        {
+            juce::String header;
+            header << "HTTP/1.1 200 OK\r\nContent-Type: " << a.type << "\r\nContent-Length: " << a.size
+                   << "\r\nCache-Control: max-age=86400\r\nConnection: close\r\n\r\n";
+            const auto h = header.toStdString();
+            s.write (h.data(), (int) h.size());
+            s.write (a.data, a.size);
+            return;
+        }
     if (method.isNotEmpty() && target.startsWithChar ('/'))
         body = handle (method, target, status, type);
 
@@ -244,7 +261,7 @@ juce::String RemoteControl::handle (const juce::String& method, const juce::Stri
     if (path == "/manifest.json")
     {
         status = 200;
-        return R"({"name":"Onde Télécommande","short_name":"Onde","display":"standalone","background_color":"#16181c","theme_color":"#16181c","start_url":"/"})";
+        return R"({"name":"Onde Télécommande","short_name":"Onde","display":"standalone","background_color":"#16181c","theme_color":"#16181c","start_url":"/","icons":[{"src":"/logo-192.png","sizes":"192x192","type":"image/png"},{"src":"/logo.svg","sizes":"any","type":"image/svg+xml"}]})";
     }
     if (! path.startsWith ("/api/")) { status = 404; return R"({"error":"introuvable"})"; }
     if (! checkCode (query, status)) return status == 429 ? R"({"error":"trop d'essais, attendez 30 s"})" : R"({"error":"code incorrect"})";

@@ -636,12 +636,7 @@ void MainComponent::registerActions()
     // --- Aide
     ctx.addAction ("palette.open", U ("Rechercher une commande…"), "Aide", KP ('k', ctrl, 0), [this] { openPalette(); });
     ctx.addAction ("help.shortcuts", "Raccourcis clavier", "Aide", KP (KP::F1Key), [this] { showShortcuts(); });
-    ctx.addAction ("help.about", U ("À propos d'Onde"), "Aide", {}, [this]
-    {
-        juce::AlertWindow::showMessageBoxAsync (juce::MessageBoxIconType::InfoIcon, U ("Onde 0.4"),
-            U ("Station de travail audio bâtie sur Tracktion Engine et JUCE.\n\nChaque plugin VST3 marqué ◆ tourne dans son propre processus : "
-               "s'il plante, seule sa piste se tait, et « Relancer » le redémarre avec son dernier réglage enregistré."));
-    })->separatorBefore = true;
+    ctx.addAction ("help.about", U ("À propos d'Onde"), "Aide", {}, [] { AboutPanel::show(); })->separatorBefore = true;
 
     // Une action par effet / instrument, pour les trouver en tapant leur nom (et dans le menu Studio).
     auto addPluginAction = [this] (const PluginEntry& e)

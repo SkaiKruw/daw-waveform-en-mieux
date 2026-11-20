@@ -307,8 +307,15 @@ void ToolbarPanel::paint (juce::Graphics& g)
     if (getProjectTitle)
     {
         auto area = juce::Rectangle<int> (titleX, 0, remoteBtn->getX() - titleX - 4, getHeight());
-        g.setColour (theme::text); g.setFont (theme::ui (13.0f, true));
-        g.drawText (getProjectTitle(), area, juce::Justification::centredRight, true);
+        const auto title = getProjectTitle();
+        const auto font = theme::ui (13.0f, true);
+        g.setColour (theme::text); g.setFont (font);
+        g.drawText (title, area, juce::Justification::centredRight, true);
+        // Petit logo devant le titre du projet.
+        const float textW = juce::GlyphArrangement::getStringWidth (font, title);
+        const float logoX = (float) area.getRight() - textW - 30.0f;
+        if (logoX > (float) area.getX())
+            theme::drawLogo (g, { logoX, (float) getHeight() * 0.5f - 11.0f, 22.0f, 22.0f });
     }
 }
 
