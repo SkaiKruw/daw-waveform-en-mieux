@@ -11,6 +11,7 @@
 #include "RemoteControl.h"
 #include "RemotePanel.h"
 #include "AboutPanel.h"
+#include "HubPanel.h"
 #include "CommandPalette.h"
 #include "Panels.h"
 
@@ -34,6 +35,16 @@ public:
     void closePalette() { palette.close(); }
 
     void newProject();
+    // Modèles de projet de l'écran d'accueil : 0 vide, 1 enregistrement, 2 production.
+    void newProjectFromTemplate (int kind);
+    std::function<void()> onOpenDemo;                 // projet de démonstration (fourni par l'application)
+    static juce::StringArray recentProjects();        // projets récents existants, du plus récent au plus ancien
+    static void rememberProject (const juce::File&);
+    static inline bool testMode = false;              // modes --xxx-test : liste de projets récents séparée
+    void showHub();
+    // Après création ou ouverture : les plugins écrivent leur état juste après ; sans action de l'utilisateur
+    // (historique vide), le projet doit rester « non modifié » (pas de question à la fermeture).
+    void markCleanWhenSettled();
     void openProject();
     void openProjectFile (const juce::File&);
     void saveProject (std::function<void (bool)> done = nullptr);
@@ -124,6 +135,7 @@ private:
     CommandPalette palette { ctx };
     RemoteControl remote { ctx };                       // télécommande depuis un téléphone
     juce::Component::SafePointer<juce::DialogWindow> remoteWindow;
+    juce::Component::SafePointer<juce::DialogWindow> hubWindow;
     juce::String status;
     juce::String paintedStatus;
     int statusTick = 0;

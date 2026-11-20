@@ -108,6 +108,7 @@ MainComponent::~MainComponent()
 {
     onde::trace ("~MainComponent: début");
     if (remoteWindow != nullptr) delete remoteWindow.getComponent();
+    if (hubWindow != nullptr) delete hubWindow.getComponent();
     remote.stop();
     juce::Desktop::getInstance().removeFocusChangeListener (this);
     catalog.removeChangeListener (this);
@@ -284,6 +285,7 @@ void MainComponent::registerActions()
 
     // --- Fichier
     ctx.addAction ("file.new", "Nouveau projet", "Fichier", KP ('n', ctrl, 0), [this] { newProject(); });
+    ctx.addAction ("file.hub", U ("Écran d'accueil (modèles, projets récents)…"), "Fichier", KP ('h', ctrl | shift, 0), [this] { showHub(); });
     ctx.addAction ("file.open", U ("Ouvrir…"), "Fichier", KP ('o', ctrl, 0), [this] { openProject(); });
     ctx.addAction ("file.save", "Enregistrer", "Fichier", KP ('s', ctrl, 0), [this] { saveProject(); })->separatorBefore = true;
     ctx.addAction ("file.saveas", U ("Enregistrer sous…"), "Fichier", KP ('s', ctrl | shift, 0), [this] { saveProjectAs(); });
@@ -975,7 +977,77 @@ void MainComponent::newProject()
     ctx.addAudioTrack();
     edit->getUndoManager().clearUndoHistory();
     edit->resetChangedStatus();
+    markCleanWhenSettled();
     setStatus ("Nouveau projet");
+}
+
+void MainComponent::newProjectFromTemplate (int kind)
+{
+    if (kind == 0) { newProject(); return; }
+    // Projet sans piste, puis directement les pistes du modèle (rien à supprimer : aucune vue ne garde
+    // de piste détruite).
+    auto file = juce::File::getSpecialLocation (juce::File::tempDirectory).getChildFile ("onde-sans-titre-" + juce::String (juce::Random::getSystemRandom().nextInt (1000000)) + ".onde");
+    auto e = te::createEmptyEdit (engine, file);
+    e->tempoSequence.getTempos()[0]->setBpm (120.0);
+    // Tracktion crée une piste par défaut : retirée avant que les vues ne s'attachent au projet.
+    for (auto* t : te::getAudioTracks (*e)) e->deleteTrack (t);
+    setEdit (std::move (e), file, true);
+    if (! edit) return;
+    auto named = [] (te::AudioTrack* t, const char* name) { if (t != nullptr) t->setName (U (name)); return t; };
+    if (kind == 1)          // Enregistrement : voix et instruments acoustiques, avec une réverbération.
+    {
+        named (ctx.addAudioTrack(), "Voix");
+        named (ctx.addAudioTrack(), "Guitare");
+        named (ctx.addAudioTrack(), "Basse");
+        named (ctx.addAudioTrack(), "Batterie");
+        ctx.addFxTrack();
+        if (auto* first = te::getAudioTracks (*edit).getFirst()) ctx.selectTrack (first);
+        setStatus (U ("Nouveau projet « Enregistrement » : armez une piste (R) puis enregistrez (*)"));
+    }
+    else if (kind == 2)     // Production : instruments virtuels, une voix, une réverbération.
+    {
+        named (ctx.addInstrumentTrack(), "Basse");
+        named (ctx.addInstrumentTrack(), "Accords");
+        named (ctx.addInstrumentTrack(), "Lead");
+        named (ctx.addAudioTrack(), "Voix");
+        ctx.addFxTrack();
+        if (auto* first = te::getAudioTracks (*edit).getFirst()) ctx.selectTrack (first);
+        setStatus (U ("Nouveau projet « Production » : double-cliquez dans une piste pour créer un conteneur MIDI"));
+    }
+    edit->getUndoManager().clearUndoHistory();
+    edit->resetChangedStatus();
+    markCleanWhenSettled();
+    ctx.changed();
+}
+
+static juce::File recentsFile()
+{
+    return juce::File::getSpecialLocation (juce::File::userApplicationDataDirectory).getChildFile ("Onde").getChildFile (MainComponent::testMode ? U ("projets-récents-tests.txt") : U ("projets-récents.txt"));
+}
+
+juce::StringArray MainComponent::recentProjects()
+{
+    juce::StringArray r;
+    for (auto& line : juce::StringArray::fromLines (recentsFile().loadFileAsString()))
+        if (line.isNotEmpty() && juce::File (line).existsAsFile() && ! r.contains (line)) r.add (line);
+    return r;
+}
+
+void MainComponent::rememberProject (const juce::File& f)
+{
+    if (f == recoveryFile() || ! f.existsAsFile()) return;
+    auto list = recentProjects();
+    list.removeString (f.getFullPathName());
+    list.insert (0, f.getFullPathName());
+    while (list.size() > 12) list.remove (list.size() - 1);
+    recentsFile().getParentDirectory().createDirectory();
+    recentsFile().replaceWithText (list.joinIntoString ("\n"));
+}
+
+void MainComponent::showHub()
+{
+    if (hubWindow != nullptr) { hubWindow->toFront (true); return; }
+    hubWindow = HubPanel::show (*this);
 }
 
 void MainComponent::openProject()
@@ -993,6 +1065,8 @@ void MainComponent::openProjectFile (const juce::File& f)
     {
         setEdit (std::move (e), f, false);
         edit->resetChangedStatus();
+        markCleanWhenSettled();
+        rememberProject (f);
         setStatus (U ("Projet ouvert : ") + f.getFileName());
     }
     else setStatus (U ("Impossible d'ouvrir ") + f.getFileName());
@@ -1060,7 +1134,7 @@ bool MainComponent::saveProjectTo (const juce::File& target)
     edit->editFileRetriever = [f] { return f; };
     const int copied = consolidateMedia (f);
     const bool ok = te::EditFileOperations (*edit).writeToFile (f, false);
-    if (ok) { projectFile = f; untitled = false; edit->resetChangedStatus(); if (onTitleChanged) onTitleChanged (projectName()); }
+    if (ok) { projectFile = f; untitled = false; edit->resetChangedStatus(); rememberProject (f); if (onTitleChanged) onTitleChanged (projectName()); }
     else { const auto old = projectFile; edit->editFileRetriever = [old] { return old; }; }
     setStatus (! ok ? U ("Échec de l'enregistrement")
                     : copied > 0 ? U ("Projet enregistré, ") + juce::String (copied) + U (" fichier(s) audio copié(s) dans « ") + f.getFileNameWithoutExtension() + U (" - Audio »")
@@ -1298,4 +1372,21 @@ bool MainComponent::keyPressed (const juce::KeyPress& k)
     }
     if (palette.isVisible()) return false;
     return ctx.performShortcut (k);
+}
+
+void MainComponent::markCleanWhenSettled()
+{
+    juce::Component::SafePointer<MainComponent> safe (this);
+    te::Edit* e = edit.get();
+    // Les plugins et le minuteur d'annulation de Tracktion marquent le projet « modifié » jusqu'à ~1 s après
+    // sa création. Sans clic de l'utilisateur entre-temps, on remet l'état « non modifié » (à 0,6 puis 2 s).
+    const auto clicks = juce::Desktop::getInstance().getMouseButtonClickCounter();
+    for (int ms : { 600, 2000 })
+        juce::Timer::callAfterDelay (ms, [safe, e, clicks]
+        {
+            if (safe == nullptr || safe->edit.get() != e || e == nullptr) return;
+            if (juce::Desktop::getInstance().getMouseButtonClickCounter() != clicks) return;
+            e->resetChangedStatus();
+            if (safe->onTitleChanged) safe->onTitleChanged (safe->projectName());
+        });
 }

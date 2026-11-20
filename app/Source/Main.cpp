@@ -327,6 +327,14 @@ public:
         auto args = juce::StringArray::fromTokens (commandLine, true);
         args.removeEmptyStrings();
         tracing = args[0].startsWith ("--");
+        MainComponent::testMode = args[0].startsWith ("--");
+        // En cas de plantage : pile d'appels écrite dans %APPDATA%\Onde\plantage.txt (diagnostic).
+        juce::SystemStats::setApplicationCrashHandler ([] (void*)
+        {
+            const auto f = appDataDir().getChildFile ("plantage.txt");
+            f.getParentDirectory().createDirectory();
+            f.replaceWithText (juce::Time::getCurrentTime().toString (true, true) + "\n" + juce::SystemStats::getStackBacktrace());
+        });
         juce::LookAndFeel::setDefaultLookAndFeel (&lookAndFeel);
         tooltips = std::make_unique<juce::TooltipWindow> (nullptr, 600);
         engine = std::make_unique<te::Engine> ("Onde", std::make_unique<OndeUIBehaviour>(), nullptr);
@@ -421,25 +429,30 @@ public:
         window = std::make_unique<MainWindow> (std::move (content));
         mc->onTitleChanged = [this] (const juce::String& t) { if (window) window->setName (t + U (" — Onde")); };
 
+        mc->onOpenDemo = [this, mc] { openDemo (*mc); };
         const juce::File arg (args[0].unquoted());
-        if (args.size() > 0 && arg.existsAsFile())
-            mc->openProjectFile (arg);
-        else
-            openDemo (*mc);
+        const bool openedFile = args.size() > 0 && arg.existsAsFile();
+        const bool hub = ! openedFile && HubPanel::showAtStartup();
+        if (openedFile)  mc->openProjectFile (arg);
+        else if (hub)    mc->newProject();          // l'écran d'accueil propose modèles et projets récents
+        else             openDemo (*mc);
 
         // Première ouverture : analyse des VST3 en arrière-plan (dans des processus isolés).
         if (catalog->getVST3 (true).isEmpty() && catalog->getVST3 (false).isEmpty())
             catalog->startScan();
 
-        // Récupération après un arrêt brutal d'Onde.
+        // Récupération après un arrêt brutal d'Onde (avant l'écran d'accueil).
         if (crashedLastTime && MainComponent::recoveryFile().existsAsFile())
             juce::AlertWindow::showOkCancelBox (juce::MessageBoxIconType::QuestionIcon, U ("Récupérer la session ?"),
                 U ("Onde ne s'est pas fermé normalement la dernière fois. Une copie de secours de votre projet sans titre existe. Voulez-vous la rouvrir ?"),
                 U ("Récupérer"), U ("Ignorer"), nullptr,
-                juce::ModalCallbackFunction::create ([mc] (int r)
+                juce::ModalCallbackFunction::create ([mc, hub] (int r)
                 {
                     if (r == 1) mc->openProjectFile (MainComponent::recoveryFile());
+                    else if (hub) mc->showHub();
                 }));
+        else if (hub)
+            juce::MessageManager::callAsync ([mc] { mc->showHub(); });
     }
 
     void shutdown() override
@@ -484,6 +497,7 @@ private:
         auto project = demo::create (*engine, file, "synth-pad", synth);
         mc.setEdit (std::move (project.edit), file, true);
         if (auto* e = mc.getEdit()) { e->getUndoManager().clearUndoHistory(); e->resetChangedStatus(); }
+        mc.markCleanWhenSettled();
     }
 
     // Chaque VST3 installé : chargement isolé, son, fenêtre, préréglage, latence.
@@ -1472,6 +1486,28 @@ private:
                 check (theme::makeLogo() != nullptr, U ("le logo (SVG embarqué) se charge"));
             }
             remote.stop();
+        }
+
+        // Écran d'accueil : modèles de projet et projets récents.
+        {
+            auto names = [&] { juce::StringArray n; for (auto* t : te::getAudioTracks (*mc->getEdit())) n.add (t->getName()); return n; };
+            mc->newProjectFromTemplate (1);
+            const auto rec = names();
+            check (rec.joinIntoString (",").startsWith ("Voix,Guitare,Basse,Batterie") && rec.size() == 5 && ! mc->getEdit()->hasChangedSinceSaved(),
+                   U ("modèle « Enregistrement » : ") + rec.joinIntoString (", "));
+            mc->newProjectFromTemplate (2);
+            const auto prod = names();
+            int instruments = 0;
+            for (auto* t : te::getAudioTracks (*mc->getEdit())) if (mc->getContext().getInstrument (*t) != nullptr) ++instruments;
+            check (prod.joinIntoString (",").startsWith ("Basse,Accords,Lead,Voix") && instruments == 3,
+                   U ("modèle « Production » : ") + prod.joinIntoString (", ") + U (" (") + juce::String (instruments) + U (" instruments)"));
+            const auto saved = dir.getChildFile (U ("projet récent.onde"));
+            check (mc->saveProjectTo (saved) && MainComponent::recentProjects()[0] == saved.getFullPathName(),
+                   U ("un projet enregistré passe en tête des projets récents"));
+            HubPanel hubPanel (*mc);
+            check (hubPanel.numRecent() >= 1, U ("l'écran d'accueil liste les projets récents (") + juce::String (hubPanel.numRecent()) + ")");
+            pump (200);
+            snapshot (hubPanel, dir.getChildFile ("12-accueil.png"));
         }
 
         std::printf ("\n%s\n", failures == 0 ? "INTERFACE OK — toutes les vérifications passent." : "DES VÉRIFICATIONS ÉCHOUENT");

@@ -198,6 +198,7 @@ public:
     }
 
     te::AudioTrack& track;
+    const te::EditItemID trackID { track.itemID };
     bool usePan = false;
     int depth = 0;                                   // niveau d'imbrication dans les dossiers
 
@@ -222,6 +223,7 @@ public:
 
     void sync()
     {
+        if (! trackAlive()) return;
         muteBtn.setToggleState (track.isMuted (false), juce::dontSendNotification);
         soloBtn.setToggleState (track.isSolo (false), juce::dontSendNotification);
         armBtn.setToggleState (ctx.isTrackArmed (track), juce::dontSendNotification);
@@ -259,8 +261,15 @@ public:
         restartBtn.setBounds (getLocalBounds().removeFromBottom (bannerH).removeFromRight (180).reduced (10, 12));
     }
 
+    // La piste existe-t-elle encore ? (supprimée juste avant que la liste soit reconstruite au minuteur)
+    bool trackAlive() const
+    {
+        return ctx.edit != nullptr && te::findTrackForID (*ctx.edit, trackID) == &track;
+    }
+
     void paint (juce::Graphics& g) override
     {
+        if (! trackAlive()) { g.fillAll (theme::bg); return; }
         const auto col = trackColour (track);
         const int h = trackH();
         const bool selected = ctx.selectedTrackID == track.itemID;
@@ -613,6 +622,7 @@ public:
 
     void mouseDown (const juce::MouseEvent& e) override
     {
+        if (! trackAlive()) return;
         mode = Mode::none;
         auto& um = ctx.edit->getUndoManager();
         const int h = trackH();
