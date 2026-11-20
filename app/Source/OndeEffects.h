@@ -55,10 +55,32 @@ namespace ondefx
         struct Param { juce::CachedValue<float> value; te::AutomatableParameter::Ptr param; };
         te::AutomatableParameter* param (const juce::String& id) const;
         float value (const juce::String& id) const   { if (auto* p = param (id)) return p->getCurrentValue(); return 0.0f; }
+        // Écrit la valeur enregistrée tout de suite (dans la transaction d'annulation en cours), puis le paramètre.
+        void setStored (const juce::String& id, float v)
+        {
+            const int i = ids.indexOf (id);
+            if (i < 0) return;
+            params[i]->value = v;
+            params[i]->param->setParameter (v, juce::dontSendNotification);
+        }
 
     protected:
         te::AutomatableParameter* declare (const juce::String& id, const juce::String& name, juce::NormalisableRange<float>,
                                            float defaultValue, std::function<juce::String (float)> format);
+        // Annuler / rétablir modifient la valeur enregistrée : le paramètre (donc le son) suit aussitôt.
+        void valueTreePropertyChanged (juce::ValueTree& v, const juce::Identifier& i) override
+        {
+            if (v == state)
+                if (const int idx = ids.indexOf (i.toString()); idx >= 0)
+                {
+                    auto& p = *params[idx];
+                    const auto stored = v[i];
+                    const float target = stored.isVoid() ? p.param->getDefaultValue().value_or (p.param->getCurrentExplicitValue()) : (float) stored;
+                    if (std::abs (p.param->getCurrentExplicitValue() - target) > 1.0e-6f)
+                        p.param->setParameter (target, juce::dontSendNotification);
+                }
+            te::Plugin::valueTreePropertyChanged (v, i);
+        }
         juce::OwnedArray<Param> params;
         juce::StringArray ids;
     };

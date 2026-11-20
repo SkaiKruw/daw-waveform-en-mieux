@@ -14,6 +14,8 @@
 #include "HubPanel.h"
 #include "HistoryPanel.h"
 #include "ModulatorPanel.h"
+#include "KeyboardPanel.h"
+#include "LibraryPanel.h"
 #include "OndeEffects.h"
 #include "CommandPalette.h"
 #include "Panels.h"
@@ -25,6 +27,7 @@ class MainComponent  : public juce::Component,
                        private juce::FocusChangeListener
 {
 public:
+    const juce::String& getStatus() const { return status; }
     MainComponent (te::Engine&, PluginCatalog&);
     ~MainComponent() override;
 
@@ -138,7 +141,7 @@ private:
     CommandPalette palette { ctx };
     RemoteControl remote { ctx };                       // télécommande depuis un téléphone
     juce::Component::SafePointer<juce::DialogWindow> remoteWindow;
-    juce::Component::SafePointer<juce::DialogWindow> hubWindow, historyWindow, modulatorWindow;
+    juce::Component::SafePointer<juce::DialogWindow> hubWindow, historyWindow, modulatorWindow, keyboardWindow, libraryWindow;
     std::map<juce::String, juce::Component::SafePointer<juce::DialogWindow>> effectWindows;   // fenêtres des effets Onde
     juce::String status;
     juce::String paintedStatus;

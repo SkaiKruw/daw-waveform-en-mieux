@@ -1,5 +1,6 @@
 #include "MainComponent.h"
 #include "DemoContent.h"
+#include "OndeSynth.h"
 
 using State = onde::PluginSandbox::State;
 
@@ -51,6 +52,8 @@ private:
 //==============================================================================
 MainComponent::MainComponent (te::Engine& e, PluginCatalog& c) : engine (e), catalog (c), ctx (e, c)
 {
+    // Entrée MIDI du clavier d'Onde, créée avant tout projet : chaque projet ouvert la voit dès le départ.
+    KeyboardPanel::getDevice (engine);
     addAndMakeVisible (menuBar);
     addAndMakeVisible (toolbar);
     addAndMakeVisible (infoLine);
@@ -111,6 +114,8 @@ MainComponent::~MainComponent()
     if (hubWindow != nullptr) delete hubWindow.getComponent();
     if (historyWindow != nullptr) delete historyWindow.getComponent();
     if (modulatorWindow != nullptr) delete modulatorWindow.getComponent();
+    if (keyboardWindow != nullptr) delete keyboardWindow.getComponent();
+    if (libraryWindow != nullptr) delete libraryWindow.getComponent();
     for (auto& [id, w] : effectWindows) if (w != nullptr) delete w.getComponent();
     remote.stop();
     juce::Desktop::getInstance().removeFocusChangeListener (this);
@@ -493,6 +498,16 @@ void MainComponent::registerActions()
         showView (dynamic_cast<te::WaveAudioClip*> (ctx.getSelectedClip()) != nullptr ? 3 : 2);
     })->extraKeys.add (KP (KP::returnKey));
     ctx.addAction ("clip.quantise", U ("Quantifier"), "MIDI", KP ('q'), [this] { quantiseSelectedClip(); });
+    ctx.addAction ("midi.keyboard", U ("Clavier (à l'écran et clavier de l'ordinateur)…"), "MIDI", KP ('k', ctrl | shift, 0), [this]
+    {
+        if (keyboardWindow != nullptr) { keyboardWindow->toFront (true); return; }
+        keyboardWindow = KeyboardPanel::show (ctx);
+    });
+    ctx.addAction ("midi.library", U ("Bibliothèque de sons (pianos, basses, nappes, batteries…)…"), "MIDI", KP ('b', ctrl | shift, 0), [this]
+    {
+        if (libraryWindow != nullptr) { libraryWindow->toFront (true); return; }
+        libraryWindow = LibraryPanel::show (ctx);
+    });
     ctx.addAction ("midi.newPart", U ("Créer un conteneur MIDI au curseur"), "MIDI", KP ('n', ctrl | shift, 0), [this]
     {
         auto* t = ctx.getSelectedTrack();
@@ -1043,9 +1058,17 @@ void MainComponent::newProjectFromTemplate (int kind)
     }
     else if (kind == 2)     // Production : instruments virtuels, une voix, une réverbération.
     {
-        named (ctx.addInstrumentTrack(), "Basse");
-        named (ctx.addInstrumentTrack(), "Accords");
-        named (ctx.addInstrumentTrack(), "Lead");
+        // Sons de la bibliothèque d'Onde : prêts à jouer dès l'ouverture.
+        auto withSound = [this, &named] (const char* name, const char* preset)
+        {
+            auto* t = named (ctx.addInstrumentTrack(), name);
+            if (auto* p = ondefx::SynthPlugin::findPreset (U (preset))) { LibraryPanel::applyToTrack (ctx, t, *p); if (t != nullptr) t->setName (U (name)); }
+        };
+        withSound ("Batterie", "Batterie acoustique");
+        withSound ("Basse", "Basse synthé");
+        withSound ("Accords", "Piano électrique");
+        withSound ("Nappe", "Nappe chaude");
+        withSound ("Lead", "Lead scie");
         named (ctx.addAudioTrack(), "Voix");
         ctx.addFxTrack();
         if (auto* first = te::getAudioTracks (*edit).getFirst()) ctx.selectTrack (first);

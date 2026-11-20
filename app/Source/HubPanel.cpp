@@ -99,7 +99,7 @@ HubPanel::HubPanel (MainComponent& m) : main (m)
     const Def defs[] = {
         { 0, "Projet vide",            "Une piste audio et une piste instrument, 120 BPM.",                         0xff8b93a1 },
         { 1, "Enregistrement",         "Voix, guitare, basse, batterie et une réverbération : prêt à enregistrer.", 0xffe8697a },
-        { 2, "Production",             "Basse, accords et lead (synthé), une voix et une réverbération.",           0xff3fa4ff },
+        { 2, "Production",             "Batterie, basse, accords, nappe et lead prêts à jouer, une voix, une réverbération.", 0xff3fa4ff },
         { 3, "Démonstration", "« Nuits du Nord » : 8 mesures avec batterie, basse, pad et synthé VST3.",   0xff2de2c6 },
     };
     for (auto& d : defs)

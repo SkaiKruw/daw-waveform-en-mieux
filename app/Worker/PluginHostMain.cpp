@@ -16,15 +16,18 @@ namespace
         std::snprintf (dest, size, "%s", s.toRawUTF8());
     }
 
-    int scanFile (const juce::String& path)
+    // Résultat sur la sortie standard, ou dans un fichier (un VST3 « coquille » peut contenir des centaines de plugins).
+    int scanFile (const juce::String& path, const juce::String& outFile)
     {
         juce::VST3PluginFormat fmt;
         juce::OwnedArray<juce::PluginDescription> found;
         fmt.findAllTypesForFile (found, path);
+        juce::String text;
         for (auto* d : found)
-            std::printf ("PLUGIN\t%s\t%s\t%d\t%s\t%s\n", d->name.toRawUTF8(), d->manufacturerName.toRawUTF8(),
-                         d->isInstrument ? 1 : 0, d->fileOrIdentifier.toRawUTF8(), d->createIdentifierString().toRawUTF8());
-        std::fflush (stdout);
+            text << "PLUGIN\t" << d->name << "\t" << d->manufacturerName << "\t" << (d->isInstrument ? 1 : 0) << "\t"
+                 << d->fileOrIdentifier << "\t" << d->createIdentifierString() << "\n";
+        if (outFile.isNotEmpty()) juce::File (outFile).replaceWithText (text, false, false, "\n");
+        else { std::fputs (text.toRawUTF8(), stdout); std::fflush (stdout); }
         return found.isEmpty() ? 1 : 0;
     }
 }
@@ -89,7 +92,8 @@ public:
 
         if (args[0] == "--scan")
         {
-            setApplicationReturnValue (scanFile (args[1].unquoted()));
+            // Réponse donnée : fin immédiate, sans attendre le déchargement du plugin (certains s'y bloquent).
+            std::_Exit (scanFile (args[1].unquoted(), args.size() > 2 ? args[2].unquoted() : juce::String()));
             quit();
             return;
         }

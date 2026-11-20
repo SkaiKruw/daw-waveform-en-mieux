@@ -1,6 +1,7 @@
 // Fenêtres de réglage des effets Onde : bouton rotatif lié à un paramètre automatisable, égaliseur avec
 // analyseur et points de bande, compresseur avec courbe de transfert, limiteur avec réduction de gain.
 #include "OndeEffects.h"
+#include "OndeSynth.h"
 #include "Theme.h"
 #include "ParamControls.h"
 
@@ -465,6 +466,7 @@ namespace ondefx
         if (auto* eq = dynamic_cast<EqPlugin*> (&p))          return std::make_unique<EqEditor> (*eq);
         if (auto* c = dynamic_cast<CompPlugin*> (&p))         return std::make_unique<CompEditor> (*c);
         if (auto* l = dynamic_cast<LimiterPlugin*> (&p))      return std::make_unique<LimiterEditor> (*l);
+        if (auto* s = dynamic_cast<SynthPlugin*> (&p))        return createSynthEditor (*s);
         return {};
     }
 }

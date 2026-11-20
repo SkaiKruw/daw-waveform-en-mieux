@@ -1,5 +1,6 @@
 #include "PluginCatalog.h"
 #include "OndeEffects.h"
+#include "OndeSynth.h"
 #include "SandboxPlugin.h"
 
 PluginCatalog::PluginCatalog() : juce::Thread ("Analyse des plugins")
@@ -23,6 +24,7 @@ juce::Array<PluginEntry> PluginCatalog::getBuiltIns (bool instruments) const
     auto add = [&] (const char* name, const char* type, bool inst) { PluginEntry e; e.name = juce::String::fromUTF8 (name); e.builtInType = type; e.isInstrument = inst; e.manufacturer = "Tracktion"; r.add (e); };
     if (instruments)
     {
+        add ("Onde Synth (pianos, basses, nappes, cordes, batteries…)", ondefx::SynthPlugin::xmlTypeName, true); r.getReference (r.size() - 1).manufacturer = "Onde";
         add ("4OSC (synthé intégré)", te::FourOscPlugin::xmlTypeName, true);
     }
     else
@@ -112,13 +114,19 @@ void PluginCatalog::run()
         sendChangeMessage();
 
         juce::ChildProcess proc;
-        if (! proc.start (juce::StringArray { host.getFullPathName(), "--scan", f.getFullPathName() }, juce::ChildProcess::wantStdOut))
+        const auto answer = juce::File::getSpecialLocation (juce::File::tempDirectory).getChildFile ("onde-analyse-" + juce::String (juce::Random::getSystemRandom().nextInt64()) + ".txt");
+        if (! proc.start (juce::StringArray { host.getFullPathName(), "--scan", f.getFullPathName(), answer.getFullPathName() }, 0))
         {
             failed.add (f.getFileName() + juce::String::fromUTF8 (" (analyseur introuvable)"));
             continue;
         }
-        const auto out = proc.readAllProcessOutput();
-        if (! proc.waitForProcessToFinish (20000)) { proc.kill(); failed.add (f.getFileName() + juce::String::fromUTF8 (" (bloqué pendant l'analyse)")); continue; }
+        // Attente limitée (20 s) ; la réponse est écrite dans un fichier, lu une fois l'analyseur terminé.
+        bool finished = false;
+        for (int waited = 0; waited < 20000 && ! threadShouldExit(); waited += 100)
+            if (proc.waitForProcessToFinish (100)) { finished = true; break; }
+        if (! finished) { proc.kill(); answer.deleteFile(); failed.add (f.getFileName() + juce::String::fromUTF8 (" (bloqué pendant l'analyse)")); continue; }
+        const auto out = answer.loadFileAsString();
+        answer.deleteFile();
 
         bool any = false;
         for (auto& line : juce::StringArray::fromLines (out))

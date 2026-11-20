@@ -5,6 +5,7 @@
 //   Onde --stems-test <dossier>   séparateur de sources : précision (SDR) et import (vérification)
 #include <JuceHeader.h>
 #include "MainComponent.h"
+#include "OndeSynth.h"
 #include "DemoContent.h"
 #include "StudioLookAndFeel.h"
 #include "Exporter.h"
@@ -931,6 +932,75 @@ private:
             }
             else std::printf ("  info   : pas d'entrée audio : test d'enregistrement ignoré\n");
         }
+
+        // Clavier d'Onde (à l'écran / ordinateur) : il joue l'instrument de la piste sélectionnée, et ses notes
+        // s'enregistrent comme celles d'un clavier MIDI.
+        {
+            auto& ctx = m->getContext();
+            edit = m->getEdit();
+            te::AudioTrack* inst = nullptr;
+            for (auto* t : te::getAudioTracks (*edit)) if (inst == nullptr && ctx.getInstrument (*t) != nullptr) inst = t;
+            check (inst != nullptr, U ("le projet de démonstration a une piste instrument : ") + (inst ? inst->getName() : juce::String ("aucune")));
+            if (inst != nullptr)
+            {
+                ctx.selectTrack (inst);
+                ctx.perform ("midi.keyboard");
+                pump (600);
+                KeyboardPanel* kb = nullptr;
+                for (int i = 0; i < juce::TopLevelWindow::getNumTopLevelWindows(); ++i)
+                    if (auto* dw = dynamic_cast<juce::DialogWindow*> (juce::TopLevelWindow::getTopLevelWindow (i)))
+                        if (auto* p = dynamic_cast<KeyboardPanel*> (dw->getContentComponent())) kb = p;
+                check (kb != nullptr, U ("la fenêtre « Clavier » s'ouvre (Ctrl+Maj+K)"));
+                for (auto in : edit->getAllInputDevices())
+                    std::printf ("  info   : entrée « %s » type %d activée %d cible piste %d\n", in->getInputDevice().getName().toRawUTF8(),
+                                 (int) in->getInputDevice().getDeviceType(), (int) in->getInputDevice().isEnabled(), (int) te::isOnTargetTrack (*in, *inst, 0));
+                if (kb != nullptr)
+                {
+                    snapshot (*kb, dir.getChildFile ("live-clavier.png"));
+                    // Jeu en direct, transport arrêté : le vumètre de la piste doit bouger.
+                    te::LevelMeasurer::Client instClient;
+                    auto* meter = inst->getLevelMeterPlugin();
+                    if (meter != nullptr) meter->measurer.addClient (instClient);
+                    edit->getTransport().ensureContextAllocated();
+                    pump (300);
+                    instClient.getAndClearAudioLevel (0); instClient.getAndClearAudioLevel (1);
+                    kb->noteOn (60, 110);
+                    float livePeak = -100.0f;
+                    for (int i = 0; i < 8; ++i) { pump (100); livePeak = juce::jmax (livePeak, instClient.getAndClearAudioLevel (0).dB, instClient.getAndClearAudioLevel (1).dB); }
+                    kb->noteOff (60);
+                    pump (300);
+                    if (meter != nullptr) meter->measurer.removeClient (instClient);
+                    check (livePeak > -60.0f, U ("une note jouée au clavier d'Onde fait sonner « ") + inst->getName() + U (" » : crête ") + juce::String (livePeak, 1) + " dB");
+
+                    // Enregistrement : Do, Mi, Sol joués pendant que le transport enregistre.
+                    // Notes de la piste avant la prise (Tracktion peut fusionner la prise dans le conteneur existant).
+                    auto countNotes = [inst] (int pitch)
+                    {
+                        int k = 0;
+                        for (auto* c : inst->getClips())
+                            if (auto* mc = dynamic_cast<te::MidiClip*> (c))
+                                for (auto* n : mc->getSequence().getNotes()) if (n->getNoteNumber() == pitch) ++k;
+                        return k;
+                    };
+                    const int before60 = countNotes (60), before64 = countNotes (64), before67 = countNotes (67);
+                    for (auto* t : te::getAudioTracks (*edit)) if (ctx.isTrackArmed (*t)) ctx.setTrackArmed (*t, false);
+                    ctx.selectTrack (inst);
+                    edit->getTransport().setPosition (te::TimePosition::fromSeconds (demo::barSeconds() * 2));
+                    ctx.perform ("transport.record");
+                    pump (500);
+                    for (int note : { 60, 64, 67 }) { kb->noteOn (note, 100); pump (250); kb->noteOff (note); pump (150); }
+                    pump (300);
+                    const bool wasRecording = edit->getTransport().isRecording();
+                    ctx.perform ("transport.record");
+                    pump (1500);
+                    const int n60 = countNotes (60) - before60, n64 = countNotes (64) - before64, n67 = countNotes (67) - before67;
+                    check (wasRecording && n60 >= 1 && n64 >= 1 && n67 >= 1,
+                           U ("les notes jouées au clavier d'Onde sont enregistrées : Do ") + juce::String (n60) + U (", Mi ") + juce::String (n64)
+                           + U (", Sol ") + juce::String (n67) + U (" nouvelle(s) note(s)"));
+                    if (auto* dw = kb->findParentComponentOfClass<juce::DialogWindow>()) delete dw;
+                }
+            }
+        }
         std::printf ("\n%s\n", failures == 0 ? "LECTURE OK" : "DES VÉRIFICATIONS ÉCHOUENT");
         std::fflush (stdout);
         edit->resetChangedStatus();
@@ -1594,9 +1664,17 @@ private:
             mc->newProjectFromTemplate (2);
             const auto prod = names();
             int instruments = 0;
-            for (auto* t : te::getAudioTracks (*mc->getEdit())) if (mc->getContext().getInstrument (*t) != nullptr) ++instruments;
-            check (prod.joinIntoString (",").startsWith ("Basse,Accords,Lead,Voix") && instruments == 3,
-                   U ("modèle « Production » : ") + prod.joinIntoString (", ") + U (" (") + juce::String (instruments) + U (" instruments)"));
+            juce::StringArray sounds;
+            for (auto* t : te::getAudioTracks (*mc->getEdit()))
+                if (auto* inst = mc->getContext().getInstrument (*t))
+                {
+                    ++instruments;
+                    if (auto* s = dynamic_cast<ondefx::SynthPlugin*> (inst)) sounds.add (s->getPresetName());
+                }
+            check (prod.joinIntoString (",").startsWith ("Batterie,Basse,Accords,Nappe,Lead,Voix") && instruments == 5
+                   && sounds.joinIntoString (",") == U ("Batterie acoustique,Basse synthé,Piano électrique,Nappe chaude,Lead scie")
+                   && ! mc->getEdit()->hasChangedSinceSaved(),
+                   U ("modèle « Production » : ") + prod.joinIntoString (", ") + U (" (sons : ") + sounds.joinIntoString (", ") + ")");
             const auto saved = dir.getChildFile (U ("projet récent.onde"));
             check (mc->saveProjectTo (saved) && MainComponent::recentProjects()[0] == saved.getFullPathName(),
                    U ("un projet enregistré passe en tête des projets récents"));
@@ -1986,6 +2064,164 @@ private:
                            + juce::String (late, 2) + U (" dB après (attendu 0 puis +12)"));
                 }
                 eqAuto->deleteFromParent();
+            }
+
+            // Onde Synth et bibliothèque de sons : chaque son joue, sans saturer ; justesse ; batterie ; annuler ;
+            // enregistrement avec le projet ; fenêtres.
+            {
+                auto* st = c4.addInstrumentTrack (nullptr);
+                ondefx::SynthPlugin* synth = nullptr;
+                if (st != nullptr) for (auto* p : st->pluginList) if (auto* s = dynamic_cast<ondefx::SynthPlugin*> (p)) synth = s;
+                check (synth != nullptr && st->getName() == "Piano de concert",
+                       U ("une nouvelle piste instrument a Onde Synth, son « Piano de concert » (piste « ") + (st ? st->getName() : juce::String()) + U (" »)"));
+                if (synth != nullptr)
+                {
+                    auto midiClip = st->insertMIDIClip ("test", { te::TimePosition(), te::TimePosition::fromSeconds (3.0) }, nullptr);
+                    auto setNotes = [&] (std::initializer_list<int> pitches, double beats)
+                    {
+                        auto& seq = midiClip->getSequence();
+                        seq.clear (nullptr);
+                        for (int p : pitches) seq.addNote (p, te::BeatPosition(), te::BeatDuration::fromBeats (beats), 100, 0, nullptr);
+                    };
+                    auto renderSynth = [&] (const juce::String& name)
+                    {
+                        double r = 0; const auto f = dir.getChildFile ("synth-" + juce::File::createLegalFileName (name) + ".wav");
+                        renderEdit (ed, f, { st }); return readAll (f, r);
+                    };
+                    // Tous les sons de la bibliothèque.
+                    int ok = 0, total = 0;
+                    juce::String bad;
+                    for (auto& preset : ondefx::SynthPlugin::presets())
+                    {
+                        ++total;
+                        const bool drums = juce::String::fromUTF8 (preset.category) == "Batteries";
+                        LibraryPanel::applyToTrack (c4, st, preset);
+                        auto& seq = midiClip->getSequence();
+                        seq.clear (nullptr);
+                        if (drums) for (int k = 0; k < 4; ++k) for (int p : { 36, 38, 42 }) seq.addNote (p, te::BeatPosition::fromBeats (k), te::BeatDuration::fromBeats (0.25), 110, 0, nullptr);
+                        else for (int p : { 48, 60, 64, 67 }) seq.addNote (p, te::BeatPosition(), te::BeatDuration::fromBeats (2.0), 100, 0, nullptr);
+                        const auto b = renderSynth (juce::String::fromUTF8 (preset.name));
+                        const float peak = b.getMagnitude (0, b.getNumSamples());
+                        const float rms = b.getRMSLevel (0, 0, juce::jmin (b.getNumSamples(), 48000));
+                        bool finite = true;
+                        for (int i = 0; i < b.getNumSamples() && finite; ++i) finite = std::isfinite (b.getSample (0, i));
+                        if (finite && peak < 1.0f && juce::Decibels::gainToDecibels (rms) > -40.0f) ++ok;
+                        else bad << juce::String::fromUTF8 (preset.name) << " (crête " << juce::String (juce::Decibels::gainToDecibels (peak), 1)
+                                  << ", RMS " << juce::String (juce::Decibels::gainToDecibels (rms), 1) << ") ";
+                    }
+                    check (ok == total, U ("bibliothèque : ") + juce::String (ok) + "/" + juce::String (total) + U (" sons jouent, sans saturer ni valeur invalide ") + bad);
+
+                    // Justesse : La 440 Hz sur l'orgue (sinus) et sur le piano (partiels presque harmoniques).
+                    auto pitchOf = [] (const juce::AudioBuffer<float>& b)
+                    {
+                        // Passages par zéro montants, interpolés, sur 0,2 à 1,2 s.
+                        double first = -1, last = -1; int count = 0;
+                        for (int i = 9600 + 1; i < juce::jmin (b.getNumSamples(), 57600); ++i)
+                        {
+                            const float a = b.getSample (0, i - 1), c = b.getSample (0, i);
+                            if (a < 0 && c >= 0) { const double t = i - 1 + a / (a - c); if (first < 0) first = t; last = t; ++count; }
+                        }
+                        return count > 1 ? (count - 1) * 48000.0 / (last - first) : 0.0;
+                    };
+                    LibraryPanel::applyToTrack (c4, st, *ondefx::SynthPlugin::findPreset ("Orgue doux"));
+                    synth->param ("sub")->setParameter (0.0f, juce::sendNotification);
+                    synth->param ("mix2")->setParameter (0.0f, juce::sendNotification);
+                    synth->param ("vibrato")->setParameter (0.0f, juce::sendNotification);
+                    setNotes ({ 69 }, 4.0);
+                    const double organHz = pitchOf (renderSynth ("la-orgue"));
+                    LibraryPanel::applyToTrack (c4, st, *ondefx::SynthPlugin::findPreset ("Piano doux"));
+                    setNotes ({ 69 }, 4.0);
+                    const auto pianoBuf = renderSynth ("la-piano");
+                    // Le piano a des partiels : on mesure le fondamental par Goertzel autour de 440 Hz.
+                    double bestHz = 0, bestMag = 0;
+                    for (double hzv = 430.0; hzv <= 450.0; hzv += 0.25)
+                    {
+                        const double w = juce::MathConstants<double>::twoPi * hzv / 48000.0, coeff = 2.0 * std::cos (w);
+                        double q1 = 0, q2 = 0;
+                        for (int i = 4800; i < 4800 + 48000 && i < pianoBuf.getNumSamples(); ++i) { const double q0 = coeff * q1 - q2 + pianoBuf.getSample (0, i); q2 = q1; q1 = q0; }
+                        const double mag = q1 * q1 + q2 * q2 - q1 * q2 * coeff;
+                        if (mag > bestMag) { bestMag = mag; bestHz = hzv; }
+                    }
+                    check (std::abs (organHz - 440.0) < 0.5 && std::abs (bestHz - 440.0) < 1.5,
+                           U ("justesse : La 440 Hz → orgue ") + juce::String (organHz, 2) + U (" Hz, piano ") + juce::String (bestHz, 2) + " Hz");
+
+                    // Batterie : grosse caisse grave, charleston aiguë (centre de gravité du spectre).
+                    LibraryPanel::applyToTrack (c4, st, *ondefx::SynthPlugin::findPreset ("Batterie acoustique"));
+                    auto brightness = [] (const juce::AudioBuffer<float>& b)
+                    {
+                        // Rapport d'énergie de la dérivée (aigus) à celle du signal : grand = son brillant.
+                        double e = 0, d = 0;
+                        for (int i = 1; i < juce::jmin (b.getNumSamples(), 24000); ++i) { const double x = b.getSample (0, i), dx = x - b.getSample (0, i - 1); e += x * x; d += dx * dx; }
+                        return e > 0 ? std::sqrt (d / e) * 48000.0 / juce::MathConstants<double>::twoPi : 0.0;
+                    };
+                    setNotes ({ 36 }, 0.5);
+                    const double kickHz = brightness (renderSynth ("grosse-caisse"));
+                    setNotes ({ 42 }, 0.5);
+                    const double hatHz = brightness (renderSynth ("charleston"));
+                    check (kickHz > 20 && kickHz < 400 && hatHz > 4000,
+                           U ("batterie : grosse caisse (note 36) centrée vers ") + juce::String (juce::roundToInt (kickHz)) + U (" Hz, charleston (note 42) vers ")
+                           + juce::String (juce::roundToInt (hatHz)) + " Hz");
+
+                    // Annuler un changement de son, puis enregistrer avec le projet.
+                    LibraryPanel::applyToTrack (c4, st, *ondefx::SynthPlugin::findPreset ("Nappe chaude"));
+                    ed.getUndoManager().undo();
+                    pump (200);
+                    const bool undone = synth->getPresetName() == "Batterie acoustique" && juce::roundToInt (synth->value ("engine")) == 3;
+                    const auto undoInfo = synth->getPresetName() + " / moteur " + juce::String (synth->value ("engine")) + " (état " + synth->state["engine"].toString() + ")" + " / historique " + ed.getUndoManager().getUndoDescription();
+                    LibraryPanel::applyToTrack (c4, st, *ondefx::SynthPlugin::findPreset ("Basse acide"));
+                    const auto saved = dir.getChildFile ("synth.onde");
+                    bool kept = false;
+                    if (mc->saveProjectTo (saved))
+                        if (auto reopened = MainComponent::loadProject (*engine, saved))
+                        {
+                            for (auto* rt : te::getAudioTracks (*reopened))
+                                for (auto* rp : rt->pluginList)
+                                    if (auto* rs = dynamic_cast<ondefx::SynthPlugin*> (rp))
+                                        kept = kept || (rs->getPresetName() == "Basse acide" && std::abs (rs->value ("reso") - 0.8f) < 0.001f);
+                            EditContext::destroyEdit (reopened);
+                        }
+                    check (undone && kept, U ("changement de son annulable (") + juce::String (undone ? "oui" : "non") + " : " + undoInfo + U ("), son et réglages enregistrés avec le projet (")
+                                           + juce::String (kept ? "oui" : "non") + ")");
+
+                    // Un bouton tourné puis « annuler » : le son revient (la valeur entendue, pas seulement l'affichage).
+                    {
+                        auto& um = ed.getUndoManager();
+                        pump (500);
+                        um.beginNewTransaction ("Réglage");
+                        synth->param ("reso")->setParameter (0.1f, juce::sendNotification);
+                        pump (500);
+                        const float moved = synth->value ("reso");
+                        um.undo();
+                        pump (300);
+                        const float back = synth->value ("reso");
+                        um.redo();
+                        pump (300);
+                        const float again = synth->value ("reso");
+                        check (std::abs (moved - 0.1f) < 1.0e-4f && std::abs (back - 0.8f) < 1.0e-4f && std::abs (again - 0.1f) < 1.0e-4f,
+                               U ("réglage annulé puis rétabli, le son suit : ") + juce::String (moved, 2) + U (" → ") + juce::String (back, 2) + U (" → ") + juce::String (again, 2));
+                    }
+
+                    // Fenêtres : Onde Synth et bibliothèque.
+                    if (auto e = ondefx::createEditor (*synth)) { pump (200); snapshot (*e, dir.getChildFile ("18-onde-synth.png")); }
+                    c4.selectTrack (st);
+                    c4.perform ("midi.library");
+                    pump (400);
+                    LibraryPanel* lib = nullptr;
+                    for (int i = 0; i < juce::TopLevelWindow::getNumTopLevelWindows(); ++i)
+                        if (auto* dw = dynamic_cast<juce::DialogWindow*> (juce::TopLevelWindow::getTopLevelWindow (i)))
+                            if (auto* p = dynamic_cast<LibraryPanel*> (dw->getContentComponent())) lib = p;
+                    check (lib != nullptr && lib->numPresetsShown() > 0, U ("la bibliothèque de sons s'ouvre (Ctrl+Maj+B) : ")
+                                                                       + juce::String (lib ? lib->numPresetsShown() : 0) + U (" sons dans la première famille"));
+                    if (lib != nullptr)
+                    {
+                        lib->selectCategory (2);
+                        lib->choosePreset (0, false);
+                        pump (300);
+                        snapshot (*lib, dir.getChildFile ("19-bibliotheque.png"));
+                        if (auto* dw = lib->findParentComponentOfClass<juce::DialogWindow>()) delete dw;
+                    }
+                }
+                if (st != nullptr) { ed.deleteTrack (st); c4.changed(); }
             }
         }
 

@@ -1,4 +1,5 @@
 #include "EditContext.h"
+#include "OndeSynth.h"
 
 juce::String Action::keyText() const
 {
@@ -339,14 +340,28 @@ void EditContext::routeInputsTo (te::AudioTrack* t)
         if (auto mi = dm.getMidiInDevice (i))
         {
             mi->setEnabled (true);
-            mi->setMonitorMode (te::InputDevice::MonitorMode::automatic);
+            // « Toutes les entrées MIDI » (claviers et clavier d'Onde) : écoute directe de la piste sélectionnée.
+            mi->setMonitorMode (mi->getDeviceID() == "all_midi_in" ? te::InputDevice::MonitorMode::on : te::InputDevice::MonitorMode::automatic);
         }
     edit->getTransport().ensureContextAllocated();
-    // Le clavier MIDI joue toujours la piste sélectionnée (si elle a un instrument).
+    // Le clavier MIDI joue toujours la piste sélectionnée (si elle a un instrument), par l'entrée « toutes les
+    // entrées MIDI » seulement (sinon un clavier physique sonnerait deux fois).
     if (getInstrument (*t) != nullptr)
+    {
+        bool hasAllMidi = false;
         for (auto instance : edit->getAllInputDevices())
-            if (instance->getInputDevice().getDeviceType() != te::InputDevice::waveDevice)
-                [[maybe_unused]] auto r = instance->setTarget (t->itemID, true, nullptr, 0);
+            hasAllMidi = hasAllMidi || instance->getInputDevice().getDeviceID() == "all_midi_in";
+        for (auto instance : edit->getAllInputDevices())
+        {
+            if (instance->getInputDevice().getDeviceType() == te::InputDevice::waveDevice) continue;
+            if (hasAllMidi && instance->getInputDevice().getDeviceID() != "all_midi_in")
+            {
+                for (auto id : instance->getTargets()) [[maybe_unused]] auto r = instance->removeTarget (id, nullptr);
+                continue;
+            }
+            [[maybe_unused]] auto r = instance->setTarget (t->itemID, true, nullptr, 0);
+        }
+    }
 }
 
 void EditContext::setTrackArmed (te::AudioTrack& t, bool arm)
@@ -358,10 +373,20 @@ void EditContext::setTrackArmed (te::AudioTrack& t, bool arm)
     edit->getTransport().ensureContextAllocated();
 
     const bool wantsMidi = getInstrument (t) != nullptr;
+    // MIDI : une seule entrée, « toutes les entrées MIDI » (claviers physiques et clavier d'Onde réunis) ; deux
+    // entrées armées sur une piste donnent deux prises, dont une vide qui remplace l'autre.
+    bool hasAllMidi = false;
+    for (auto instance : edit->getAllInputDevices())
+        hasAllMidi = hasAllMidi || instance->getInputDevice().getDeviceID() == "all_midi_in";
     for (auto instance : edit->getAllInputDevices())
     {
         const bool isWave = instance->getInputDevice().getDeviceType() == te::InputDevice::waveDevice;
         if (isWave == wantsMidi) continue;
+        if (wantsMidi && hasAllMidi && instance->getInputDevice().getDeviceID() != "all_midi_in")
+        {
+            if (te::isOnTargetTrack (*instance, t, 0)) instance->setRecordingEnabled (t.itemID, false);
+            continue;
+        }
         if (arm && ! te::isOnTargetTrack (*instance, t, 0))
             [[maybe_unused]] auto r = instance->setTarget (t.itemID, true, nullptr, 0);
         if (te::isOnTargetTrack (*instance, t, 0))
@@ -470,6 +495,9 @@ te::AudioTrack* EditContext::addInstrumentTrack (const PluginEntry* instrument)
     PluginEntry e = instrument != nullptr ? *instrument : catalog.getBuiltIns (true).getFirst();
     PluginCatalog::addToTrack (*t, e);
     t->setName (e.name.upToFirstOccurrenceOf (" (", false, false));
+    // Onde Synth : la piste prend le nom du son choisi (« Piano de concert »).
+    for (auto* p : t->pluginList)
+        if (auto* s = dynamic_cast<ondefx::SynthPlugin*> (p)) t->setName (s->getPresetName());
     routeInputsTo (t);
     return t;
 }
