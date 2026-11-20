@@ -1455,8 +1455,8 @@ ArrangementView::ArrangementView (EditContext& c) : ctx (c)
     hbar.setAutoHide (false);
 
     styleButton (addBtn);
-    addBtn.setTooltip (U ("Ajouter une piste"));
-    addBtn.onClick = [this] { showAddTrackMenu(); };
+    addBtn.setTooltip (U ("Nouvelle piste (instrument, batteur, voix, guitare…) · clic droit : tous les types"));
+    addBtn.onClick = [this] { if (juce::ModifierKeys::currentModifiers.isPopupMenu()) showAddTrackMenu(); else ctx.perform ("track.new"); };
     addAndMakeVisible (addBtn);
 
     ctx.addChangeListener (this);
@@ -1669,7 +1669,7 @@ void ArrangementView::showAddTrackMenu()
 {
     juce::PopupMenu m, inst;
     m.addItem (1, U ("Piste audio  (Ctrl+T)"));
-    m.addItem (2, U ("Piste instrument — 4OSC  (Ctrl+Maj+T)"));
+    m.addItem (2, U ("Piste instrument — Onde Synth  (Ctrl+Maj+T)"));
     auto bi = ctx.catalog.getBuiltIns (true), vi = ctx.catalog.getVST3 (true);
     for (int i = 0; i < bi.size(); ++i) inst.addItem (100 + i, bi[i].name);
     if (! vi.isEmpty()) inst.addSectionHeader (U ("VST3 (isolés)"));

@@ -1,4 +1,5 @@
 #include "KeyboardPanel.h"
+#include "ParamControls.h"
 
 namespace
 {
@@ -265,5 +266,6 @@ juce::DialogWindow* KeyboardPanel::show (EditContext& c)
     o.escapeKeyTriggersCloseButton = true;
     o.useNativeTitleBar = true;
     o.resizable = true;
-    return o.launchAsync();
+    // Fenêtre flottante : la fenêtre principale reste utilisable.
+    return ondeui::showToolWindow (o.dialogTitle, o.content.release(), o.resizable, o.dialogBackgroundColour);
 }

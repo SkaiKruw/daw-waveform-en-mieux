@@ -1,4 +1,5 @@
 #include "LibraryPanel.h"
+#include "ParamControls.h"
 #include "OndeSynth.h"
 #include "Chains.h"
 
@@ -211,5 +212,6 @@ juce::DialogWindow* LibraryPanel::show (EditContext& c)
     o.escapeKeyTriggersCloseButton = true;
     o.useNativeTitleBar = true;
     o.resizable = true;
-    return o.launchAsync();
+    // Fenêtre flottante : la fenêtre principale reste utilisable.
+    return ondeui::showToolWindow (o.dialogTitle, o.content.release(), o.resizable, o.dialogBackgroundColour);
 }

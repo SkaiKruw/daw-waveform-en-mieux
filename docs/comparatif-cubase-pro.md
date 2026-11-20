@@ -55,7 +55,7 @@ que les utilisateurs mettent en avant dans les tests de logiciels et de plugins.
 | Automation de tous les paramètres dans la fenêtre de projet | ✅ | volume, panoramique et chaque paramètre de chaque effet |
 | Faders VCA | ❌ | |
 | Control Room | ❌ | |
-| Réverbération, delay, modulation, saturation de qualité | 🟡 | effets de base Tracktion ; versions Onde prévues |
+| Réverbération, delay, modulation, saturation de qualité | ✅ | Onde Espace, Onde Écho, Onde Saturation (chorus et modulation : à faire) |
 | Séparation de sources (stems) | ✅ | **avantage d'Onde** : Demucs v4 intégré |
 
 ## Fichiers, export, autres
@@ -89,13 +89,13 @@ ni l'apparence : instruments, sons et boucles sont créés par Onde, de façon o
 | Ce qu'on attend en ouvrant le logiciel | Onde aujourd'hui | Ce qu'il faut faire |
 | --- | --- | --- |
 | Des instruments prêts à jouer, rangés par famille (piano, claviers, basses, cordes, nappes, leads, batterie) | ✅ **Onde Synth** : 4 moteurs, 30 sons en 8 familles | **Bibliothèque d'instruments Onde** : moteurs de synthèse originaux (piano et piano électrique par modélisation, basses, nappes, cordes, cuivres synthétiques, boîte à rythmes par synthèse) avec des dizaines de préréglages nommés en français. Rien à télécharger. |
-| Une batterie qui joue toute seule et suit le morceau | ❌ | **Batteur Onde** : styles (pop, rock, hip-hop, électro, ballade), complexité et intensité réglables, remplissages en fin de section, suit la piste d'arrangement. |
+| Une batterie qui joue toute seule et suit le morceau | ✅ Batteur (6 styles, pavé, remplissages) ; 🟡 suivre la piste d'arrangement : à faire | **Batteur Onde** : styles (pop, rock, hip-hop, électro, ballade), complexité et intensité réglables, remplissages en fin de section, suit la piste d'arrangement. |
 | Des boucles à glisser, calées sur le tempo et la tonalité du projet | ❌ | **Boucles Onde** : générées par Onde à partir de ses instruments (batterie, basse, accords, arpèges), toujours au tempo et dans la tonalité du projet, prévisualisation en un clic. |
-| Quelques gros boutons simples par instrument | 🟡 fenêtres d'effets détaillées | **Commandes rapides** : 4 à 8 macros par piste (« Chaleur », « Espace », « Brillance », « Punch ») qui pilotent plusieurs réglages à la fois (s'appuie sur les modulateurs et l'automation de tous les paramètres). |
-| Des sons de voix et de guitare tout faits | 🟡 effets Onde | **Chaînes prêtes** : « Voix pop », « Voix rap », « Podcast », « Guitare claire », « Guitare saturée », « Basse ronde »… construites avec les effets Onde. |
+| Quelques gros boutons simples par instrument | ✅ commandes rapides (chaînes et Onde Synth) | **Commandes rapides** : 4 à 8 macros par piste (« Chaleur », « Espace », « Brillance », « Punch ») qui pilotent plusieurs réglages à la fois (s'appuie sur les modulateurs et l'automation de tous les paramètres). |
+| Des sons de voix et de guitare tout faits | ✅ 14 chaînes prêtes | **Chaînes prêtes** : « Voix pop », « Voix rap », « Podcast », « Guitare claire », « Guitare saturée », « Basse ronde »… construites avec les effets Onde. |
 | Jouer sans clavier MIDI | ✅ **Clavier** (écran, AZERTY / QWERTY), notes enregistrées | **Clavier à l'écran et clavier de l'ordinateur** (touches A à L = notes, vélocité, octaves). |
 | Démarrer par ce qu'on veut faire | 🟡 écran d'accueil, modèle « Production » avec batterie, basse, accords, nappe, lead | Modèles « Beat », « Groupe », « Voix et guitare », « Podcast », prêts avec instruments et chaînes. |
 | Apprendre | ❌ | Bulles d'aide au premier lancement, projet de démonstration commenté. |
 
-Fait : clavier à l'écran, bibliothèque d'instruments. Ensuite : chaînes prêtes et commandes rapides → batteur →
+Fait : clavier à l'écran, bibliothèque d'instruments, chaînes prêtes, commandes rapides, batteur, nouvelle piste à cartes. Ensuite :
 boucles générées → modèles enrichis.

@@ -16,6 +16,8 @@
 #include "ModulatorPanel.h"
 #include "KeyboardPanel.h"
 #include "LibraryPanel.h"
+#include "DrummerPanel.h"
+#include "NewTrackPanel.h"
 #include "OndeEffects.h"
 #include "CommandPalette.h"
 #include "Panels.h"
@@ -141,7 +143,7 @@ private:
     CommandPalette palette { ctx };
     RemoteControl remote { ctx };                       // télécommande depuis un téléphone
     juce::Component::SafePointer<juce::DialogWindow> remoteWindow;
-    juce::Component::SafePointer<juce::DialogWindow> hubWindow, historyWindow, modulatorWindow, keyboardWindow, libraryWindow;
+    juce::Component::SafePointer<juce::DialogWindow> hubWindow, historyWindow, modulatorWindow, keyboardWindow, libraryWindow, drummerWindow;
     std::map<juce::String, juce::Component::SafePointer<juce::DialogWindow>> effectWindows;   // fenêtres des effets Onde
     juce::String status;
     juce::String paintedStatus;

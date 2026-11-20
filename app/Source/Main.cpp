@@ -8,6 +8,9 @@
 #include "OndeSynth.h"
 #include "OndeFx2.h"
 #include "Chains.h"
+#include "Drummer.h"
+#include "DrummerPanel.h"
+#include "NewTrackPanel.h"
 #include "DemoContent.h"
 #include "StudioLookAndFeel.h"
 #include "Exporter.h"
@@ -2353,6 +2356,101 @@ private:
                 snapshot (*mc, dir.getChildFile ("21-commandes-rapides.png"));
                 um.beginNewTransaction ("Retirer");
                 chains::apply (*t, nullptr);
+            }
+
+            // Batteur : signatures des styles, complexité, intensité, remplissages, variations stables.
+            {
+                auto onBeat = [] (const std::vector<drummer::Hit>& hits, int note, int bars)
+                {
+                    int n2 = 0;
+                    for (int b = 0; b < bars; ++b) for (int beat = 0; beat < 4; ++beat)
+                        for (auto& h : hits) if (h.note == note && std::abs (h.beat - (b * 4 + beat)) < 0.03) { ++n2; break; }
+                    return n2;
+                };
+                drummer::Settings s;
+                s.fills = 0;
+                s.style = 3;                                                     // électro : grosse caisse à chaque temps
+                const auto electro = drummer::generate (s, 4, 4);
+                s.style = 0;                                                     // pop : caisse claire sur 2 et 4
+                const auto pop = drummer::generate (s, 4, 4);
+                int snare24 = 0;
+                for (int b = 0; b < 4; ++b) for (double beat : { 1.0, 3.0 })
+                    for (auto& h : pop) if (h.note == 38 && std::abs (h.beat - (b * 4 + beat)) < 0.03) { ++snare24; break; }
+                s.complexity = 0.0f; const auto simple = drummer::generate (s, 8, 4);
+                s.complexity = 1.0f; const auto busy = drummer::generate (s, 8, 4);
+                s.complexity = 0.5f; s.intensity = 0.2f; const auto soft = drummer::generate (s, 8, 4);
+                s.intensity = 0.9f; const auto loudHits = drummer::generate (s, 8, 4);
+                auto meanVel = [] (const std::vector<drummer::Hit>& h) { double v = 0; for (auto& x : h) v += x.velocity; return h.empty() ? 0.0 : v / (double) h.size(); };
+                s.fills = 1; const auto withFill = drummer::generate (s, 4, 4);
+                int toms = 0; for (auto& h : withFill) if (h.beat >= 12.0 && h.note >= 41 && h.note <= 50 && h.note != 42 && h.note != 46 && h.note != 49) ++toms;
+                const auto again = drummer::generate (s, 4, 4);
+                bool same = again.size() == withFill.size();
+                for (size_t i = 0; same && i < again.size(); ++i) same = again[i].note == withFill[i].note && again[i].beat == withFill[i].beat && again[i].velocity == withFill[i].velocity;
+                s.variation = 2; const auto other = drummer::generate (s, 4, 4);
+                bool differs = other.size() != withFill.size();
+                for (size_t i = 0; ! differs && i < other.size(); ++i) differs = other[i].beat != withFill[i].beat || other[i].velocity != withFill[i].velocity;
+                check (onBeat (electro, 36, 4) == 16 && snare24 == 8 && busy.size() > simple.size() + 20 && meanVel (loudHits) > meanVel (soft) + 25.0
+                       && toms >= 3 && same && differs,
+                       U ("batteur : électro ") + juce::String (onBeat (electro, 36, 4)) + U ("/16 temps en grosse caisse, pop ") + juce::String (snare24)
+                       + U ("/8 caisses claires sur 2 et 4, ") + juce::String ((int) simple.size()) + U (" notes en simple contre ") + juce::String ((int) busy.size())
+                       + U (" en complexe, vélocité ") + juce::String (meanVel (soft), 0) + U (" (doux) / ") + juce::String (meanVel (loudHits), 0)
+                       + U (" (fort), ") + juce::String (toms) + U (" coups de toms dans le remplissage, même variation identique, autre variation différente"));
+
+                // Piste « Batteur », fenêtre (non modale), style changé puis annulé, son au rendu.
+                c4.perform ("track.addDrummer");
+                pump (500);
+                te::AudioTrack* drumTrack = nullptr;
+                for (auto* at : te::getAudioTracks (ed)) if (at->getName() == "Batteur") drumTrack = at;
+                te::MidiClip* region = nullptr;
+                if (drumTrack != nullptr) for (auto* c : drumTrack->getClips()) if (drummer::isDrummerRegion (c)) region = dynamic_cast<te::MidiClip*> (c);
+                DrummerPanel* panel = nullptr;
+                juce::DialogWindow* panelWindow = nullptr;
+                for (int i = 0; i < juce::TopLevelWindow::getNumTopLevelWindows(); ++i)
+                    if (auto* dw = dynamic_cast<juce::DialogWindow*> (juce::TopLevelWindow::getTopLevelWindow (i)))
+                        if (auto* p = dynamic_cast<DrummerPanel*> (dw->getContentComponent())) { panel = p; panelWindow = dw; }
+                bool clapAfter = false, popBack = false, sounds = false;
+                if (region != nullptr && panel != nullptr)
+                {
+                    snapshot (*panel, dir.getChildFile ("22-batteur.png"));
+                    panel->setStyle (3);
+                    for (auto* n : region->getSequence().getNotes()) clapAfter = clapAfter || n->getNoteNumber() == 39;
+                    ed.getUndoManager().undo();
+                    pump (200);
+                    bool anyClap = false;
+                    for (auto* n : region->getSequence().getNotes()) anyClap = anyClap || n->getNoteNumber() == 39;
+                    popBack = drummer::read (*region).style == 0 && ! anyClap;
+                    double r = 0; const auto f = dir.getChildFile ("batteur.wav");
+                    renderEdit (ed, f, { drumTrack });
+                    const auto b = readAll (f, r);
+                    sounds = b.getNumSamples() > 0 && juce::Decibels::gainToDecibels (b.getRMSLevel (0, 0, b.getNumSamples())) > -40.0f;
+                }
+                check (region != nullptr && panel != nullptr && panelWindow != nullptr && ! panelWindow->isCurrentlyModal() && clapAfter && popBack && sounds,
+                       U ("piste « Batteur » : région créée, fenêtre flottante (non modale), style Électro → claps, annuler → Pop, son au rendu (")
+                       + juce::String (sounds ? "oui" : "non") + ")");
+                if (panelWindow != nullptr) delete panelWindow;
+
+                // Nouvelle piste : voix (chaîne « Voix pop »), instrument (Onde Synth, bibliothèque ouverte, non modale).
+                auto* voiceTrack = NewTrackPanel::create (c4, NewTrackPanel::voice);
+                auto* instTrack = NewTrackPanel::create (c4, NewTrackPanel::instrument);
+                pump (400);
+                juce::DialogWindow* libWindow = nullptr;
+                for (int i = 0; i < juce::TopLevelWindow::getNumTopLevelWindows(); ++i)
+                    if (auto* dw = dynamic_cast<juce::DialogWindow*> (juce::TopLevelWindow::getTopLevelWindow (i)))
+                        if (dynamic_cast<LibraryPanel*> (dw->getContentComponent()) != nullptr) libWindow = dw;
+                ondefx::SynthPlugin* instSynth = nullptr;
+                if (instTrack != nullptr) for (auto* p : instTrack->pluginList) if (auto* sp = dynamic_cast<ondefx::SynthPlugin*> (p)) instSynth = sp;
+                check (voiceTrack != nullptr && chains::currentChain (*voiceTrack) == U ("Voix pop") && instSynth != nullptr
+                       && libWindow != nullptr && ! libWindow->isCurrentlyModal() && chains::quickControls (*instTrack).size() >= 3,
+                       U ("nouvelle piste : « Voix » avec la chaîne « ") + (voiceTrack ? chains::currentChain (*voiceTrack) : juce::String())
+                       + U (" », instrument Onde Synth avec ") + juce::String (instTrack ? chains::quickControls (*instTrack).size() : 0)
+                       + U (" commandes rapides, bibliothèque ouverte en fenêtre flottante"));
+                {
+                    NewTrackPanel cardsPanel (c4);
+                    snapshot (cardsPanel, dir.getChildFile ("23-nouvelle-piste.png"));
+                }
+                if (libWindow != nullptr) delete libWindow;
+                for (auto* tr : { drumTrack, voiceTrack, instTrack }) if (tr != nullptr) ed.deleteTrack (tr);
+                c4.changed();
             }
         }
 

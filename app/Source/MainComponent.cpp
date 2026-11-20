@@ -1,4 +1,5 @@
 #include "MainComponent.h"
+#include "ParamControls.h"
 #include "DemoContent.h"
 #include "OndeSynth.h"
 
@@ -54,6 +55,8 @@ MainComponent::MainComponent (te::Engine& e, PluginCatalog& c) : engine (e), cat
 {
     // Entrée MIDI du clavier d'Onde, créée avant tout projet : chaque projet ouvert la voit dès le départ.
     KeyboardPanel::getDevice (engine);
+    // Fenêtres d'outil flottantes : leurs touches non utilisées déclenchent les raccourcis d'Onde.
+    ondeui::globalShortcuts() = [this] (const juce::KeyPress& k) { return ctx.performShortcut (k); };
     addAndMakeVisible (menuBar);
     addAndMakeVisible (toolbar);
     addAndMakeVisible (infoLine);
@@ -116,6 +119,8 @@ MainComponent::~MainComponent()
     if (modulatorWindow != nullptr) delete modulatorWindow.getComponent();
     if (keyboardWindow != nullptr) delete keyboardWindow.getComponent();
     if (libraryWindow != nullptr) delete libraryWindow.getComponent();
+    if (drummerWindow != nullptr) delete drummerWindow.getComponent();
+    ondeui::globalShortcuts() = nullptr;
     for (auto& [id, w] : effectWindows) if (w != nullptr) delete w.getComponent();
     remote.stop();
     juce::Desktop::getInstance().removeFocusChangeListener (this);
@@ -352,6 +357,10 @@ void MainComponent::registerActions()
     snap->separatorBefore = true;
 
     // --- Projet
+    ctx.addAction ("track.new", U ("Nouvelle piste (instrument, batteur, voix, guitare…)…"), "Projet", KP ('t', ctrl | alt, 0), [this]
+    {
+        if (edit) NewTrackPanel::show (ctx);
+    });
     ctx.addAction ("track.addAudio", U ("Ajouter une piste › Audio"), "Projet", KP ('t', ctrl, 0), [this] { if (edit) { edit->getUndoManager().beginNewTransaction(); ctx.addAudioTrack(); } });
     ctx.addAction ("track.addInst", U ("Ajouter une piste › Instrument"), "Projet", KP ('t', ctrl | shift, 0), [this] { if (edit) { edit->getUndoManager().beginNewTransaction(); ctx.addInstrumentTrack(); } });
     ctx.addAction ("track.addFx", U ("Ajouter une piste › FX (bus d'effet, réverbération)"), "Projet", {}, [this]
@@ -495,8 +504,21 @@ void MainComponent::registerActions()
     // Ctrl+E / Entrée : l'éditeur qui convient à l'événement sélectionné (notes pour le MIDI, audio sinon).
     ctx.addAction ("midi.editor", U ("Ouvrir l'éditeur (notes ou audio)"), "MIDI", KP ('e', ctrl, 0), [this]
     {
+        // Région de batteur : ses réglages (style, jeu…) plutôt que les notes.
+        if (drummer::isDrummerRegion (ctx.getSelectedClip())) { ctx.perform ("midi.drummer"); return; }
         showView (dynamic_cast<te::WaveAudioClip*> (ctx.getSelectedClip()) != nullptr ? 3 : 2);
     })->extraKeys.add (KP (KP::returnKey));
+    ctx.addAction ("midi.drummer", U ("Batteur (style, jeu, remplissages)…"), "MIDI", {}, [this]
+    {
+        if (drummerWindow != nullptr) { drummerWindow->toFront (true); return; }
+        drummerWindow = DrummerPanel::show (ctx);
+    });
+    ctx.addAction ("track.addDrummer", U ("Ajouter une piste › Batteur"), "Projet", {}, [this]
+    {
+        if (! edit) return;
+        edit->getUndoManager().beginNewTransaction (U ("Ajouter un batteur"));
+        if (auto* clip = drummer::addDrummerTrack (ctx)) { ctx.selectClip (clip); ctx.perform ("midi.drummer"); }
+    });
     ctx.addAction ("clip.quantise", U ("Quantifier"), "MIDI", KP ('q'), [this] { quantiseSelectedClip(); });
     ctx.addAction ("midi.keyboard", U ("Clavier (à l'écran et clavier de l'ordinateur)…"), "MIDI", KP ('k', ctrl | shift, 0), [this]
     {
@@ -1011,7 +1033,7 @@ void MainComponent::openPluginEditor (te::Plugin& p, juce::Component* target)
         o.escapeKeyTriggersCloseButton = true;
         o.useNativeTitleBar = true;
         o.resizable = false;
-        slot = o.launchAsync();
+        slot = ondeui::showToolWindow (o.dialogTitle, o.content.release(), o.resizable, o.dialogBackgroundColour);   // flottante : lecture et sélection restent possibles
         return;
     }
     auto ed = std::make_unique<ParamEditor> (p);

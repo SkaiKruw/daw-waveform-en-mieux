@@ -1,4 +1,5 @@
 #include "RemotePanel.h"
+#include "ParamControls.h"
 #include "Theme.h"
 
 RemotePanel::RemotePanel (RemoteControl& r) : remote (r)
@@ -120,5 +121,6 @@ juce::DialogWindow* RemotePanel::show (RemoteControl& r)
     o.escapeKeyTriggersCloseButton = true;
     o.useNativeTitleBar = true;
     o.resizable = false;
-    return o.launchAsync();
+    // Fenêtre flottante : la fenêtre principale reste utilisable.
+    return ondeui::showToolWindow (o.dialogTitle, o.content.release(), o.resizable, o.dialogBackgroundColour);
 }

@@ -122,3 +122,44 @@ namespace ondeui
         te::AutomatableParameter::Ptr param;
     };
 }
+
+namespace ondeui
+{
+    // Fenêtre d'outil flottante (non modale) : la fenêtre principale reste utilisable (lecture, sélection, raccourcis)
+    // pendant qu'elle est ouverte ; elle reste au premier plan ; Échap ou la croix la ferment (et la détruisent).
+    // Raccourcis d'Onde (posés par la fenêtre principale) : une touche non utilisée par une fenêtre d'outil y est envoyée.
+    inline std::function<bool (const juce::KeyPress&)>& globalShortcuts() { static std::function<bool (const juce::KeyPress&)> f; return f; }
+
+    class ToolWindow  : public juce::DialogWindow
+    {
+    public:
+        ToolWindow (const juce::String& title, juce::Component* content, bool resizable, juce::Colour background = juce::Colour (0xff1a1d22))
+            : juce::DialogWindow (title, background, true, true)
+        {
+            setUsingNativeTitleBar (true);
+            setContentOwned (content, true);
+            setResizable (resizable, false);
+            setAlwaysOnTop (true);
+            centreAroundComponent (juce::TopLevelWindow::getActiveTopLevelWindow(), getWidth(), getHeight());
+            setVisible (true);
+            toFront (true);
+        }
+        void closeButtonPressed() override
+        {
+            setVisible (false);
+            juce::MessageManager::callAsync ([safe = juce::Component::SafePointer<ToolWindow> (this)] { delete safe.getComponent(); });
+        }
+        bool keyPressed (const juce::KeyPress& k) override
+        {
+            if (k == juce::KeyPress::escapeKey) { closeButtonPressed(); return true; }
+            if (juce::DialogWindow::keyPressed (k)) return true;
+            return globalShortcuts() ? globalShortcuts() (k) : false;     // Espace, R, Ctrl+Z… comme dans la fenêtre principale
+        }
+    };
+
+    inline juce::DialogWindow* showToolWindow (const juce::String& title, juce::Component* content, bool resizable,
+                                               juce::Colour background = juce::Colour (0xff1a1d22))
+    {
+        return new ToolWindow (title, content, resizable, background);
+    }
+}

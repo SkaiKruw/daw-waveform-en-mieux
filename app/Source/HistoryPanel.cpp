@@ -1,4 +1,5 @@
 #include "HistoryPanel.h"
+#include "ParamControls.h"
 
 HistoryPanel::HistoryPanel (EditContext& c) : ctx (c)
 {
@@ -99,5 +100,6 @@ juce::DialogWindow* HistoryPanel::show (EditContext& c)
     o.escapeKeyTriggersCloseButton = true;
     o.useNativeTitleBar = true;
     o.resizable = true;
-    return o.launchAsync();
+    // Fenêtre flottante : la fenêtre principale reste utilisable.
+    return ondeui::showToolWindow (o.dialogTitle, o.content.release(), o.resizable, o.dialogBackgroundColour);
 }
