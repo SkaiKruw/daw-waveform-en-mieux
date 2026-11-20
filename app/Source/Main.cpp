@@ -1590,13 +1590,18 @@ private:
             auto& c4 = mc->getContext();
             const double fs = 48000.0;
             const int len = (int) (fs * 4.0);
-            auto writeTones = [&] (const juce::File& f, std::initializer_list<std::pair<double, float>> tones)
+            auto writeTones = [&] (const juce::File& f, std::initializer_list<std::pair<double, float>> tones, double phase = 0.0, bool fades = false)
             {
                 juce::AudioBuffer<float> b (2, len); b.clear();
                 for (auto [hzv, amp] : tones)
                     for (int i = 0; i < len; ++i)
                     {
-                        const float v = amp * (float) std::sin (juce::MathConstants<double>::twoPi * hzv * i / fs);
+                        float v = amp * (float) std::sin (juce::MathConstants<double>::twoPi * hzv * i / fs + phase);
+                        if (fades)   // fondus de 20 ms : pas de transitoire aux extrémités
+                        {
+                            const double edge = std::min (i, len - 1 - i) / (0.02 * fs);
+                            if (edge < 1.0) v *= (float) (0.5 - 0.5 * std::cos (juce::MathConstants<double>::pi * edge));
+                        }
                         b.addSample (0, i, v); b.addSample (1, i, v);
                     }
                 f.deleteFile();
@@ -1605,13 +1610,13 @@ private:
                 if (auto w = std::unique_ptr<juce::AudioFormatWriter> (wav.createWriterFor (os.get(), fs, 2, 32, {}, 0))) { os.release(); w->writeFromAudioSampleBuffer (b, 0, len); }
             };
             // Amplitude d'une sinusoïde (Goertzel) sur la seconde 2 à 3 du rendu.
-            auto toneDb = [] (const juce::AudioBuffer<float>& b, double rate, double hzv)
+            auto toneDb = [] (const juce::AudioBuffer<float>& b, double rate, double hzv, int ch = 0)
             {
                 const int s0 = (int) (rate * 2.0), n = (int) rate;
-                if (b.getNumSamples() < s0 + n) return -200.0;
+                if (b.getNumSamples() < s0 + n || ch >= b.getNumChannels()) return -200.0;
                 const double w = juce::MathConstants<double>::twoPi * hzv / rate, coeff = 2.0 * std::cos (w);
                 double q1 = 0, q2 = 0;
-                for (int i = 0; i < n; ++i) { const double q0 = coeff * q1 - q2 + b.getSample (0, s0 + i); q2 = q1; q1 = q0; }
+                for (int i = 0; i < n; ++i) { const double q0 = coeff * q1 - q2 + b.getSample (ch, s0 + i); q2 = q1; q1 = q0; }
                 const double mag = std::sqrt (q1 * q1 + q2 * q2 - q1 * q2 * coeff) * 2.0 / n;
                 return 20.0 * std::log10 (std::max (1e-10, mag));
             };
@@ -1645,7 +1650,45 @@ private:
                 const auto cut = renderTrack ("eq-coupe-bas");
                 const double c100 = toneDb (cut, 48000, 100) - toneDb (flat, 48000, 100), c8k = toneDb (cut, 48000, 8000) - toneDb (flat, 48000, 8000);
                 check (c100 < -60.0 && std::abs (c8k) < 0.5, U ("Onde EQ : coupe-bas 24 dB/oct à 1 kHz → 100 Hz ") + juce::String (c100, 1) + U (" dB, 8 kHz ") + juce::String (c8k, 2) + " dB");
+                // Pentes : 12 dB/oct → -40 dB une décade plus bas ; 48 dB/oct → bien plus.
+                eq->param (ondefx::EqPlugin::bandId (0, "slope"))->setParameter (0.0f, juce::sendNotification);
+                const double s12 = toneDb (renderTrack ("eq-pente-12"), 48000, 100) - toneDb (flat, 48000, 100);
+                eq->param (ondefx::EqPlugin::bandId (0, "slope"))->setParameter (2.0f, juce::sendNotification);
+                const double s48 = toneDb (renderTrack ("eq-pente-48"), 48000, 100) - toneDb (flat, 48000, 100);
+                check (std::abs (s12 + 40.0) < 1.5 && s48 < -100.0,
+                       U ("Onde EQ : pentes du coupe-bas à 100 Hz → 12 dB/oct ") + juce::String (s12, 1) + U (" dB, 48 dB/oct ") + juce::String (s48, 1) + " dB");
+                eq->param (ondefx::EqPlugin::bandId (0, "slope"))->setParameter (1.0f, juce::sendNotification);
                 eq->param (ondefx::EqPlugin::bandId (0, "on"))->setParameter (0.0f, juce::sendNotification);
+
+                // Canaux par bande : la cloche en « Gauche » ne touche pas la droite ; en « Side » elle ne touche
+                // pas une source mono (L = R) ; en « Mid » elle agit pleinement.
+                eq->param (ondefx::EqPlugin::bandId (3, "gain"))->setParameter (12.0f, juce::sendNotification);
+                eq->param (ondefx::EqPlugin::bandId (3, "mode"))->setParameter (1.0f, juce::sendNotification);
+                const auto left = renderTrack ("eq-gauche");
+                const double gl = toneDb (left, 48000, 1000, 0) - toneDb (flat, 48000, 1000, 0), gr = toneDb (left, 48000, 1000, 1) - toneDb (flat, 48000, 1000, 1);
+                eq->param (ondefx::EqPlugin::bandId (3, "mode"))->setParameter (4.0f, juce::sendNotification);
+                const double gs = toneDb (renderTrack ("eq-side"), 48000, 1000) - toneDb (flat, 48000, 1000);
+                eq->param (ondefx::EqPlugin::bandId (3, "mode"))->setParameter (3.0f, juce::sendNotification);
+                const double gm = toneDb (renderTrack ("eq-mid"), 48000, 1000) - toneDb (flat, 48000, 1000);
+                check (std::abs (gl - 12.0) < 0.5 && std::abs (gr) < 0.1 && std::abs (gs) < 0.1 && std::abs (gm - 12.0) < 0.5,
+                       U ("Onde EQ : canaux par bande → gauche ") + juce::String (gl, 1) + U (" / droite ") + juce::String (gr, 2)
+                       + U (", side ") + juce::String (gs, 2) + U (", mid ") + juce::String (gm, 1) + " dB");
+                eq->param (ondefx::EqPlugin::bandId (3, "mode"))->setParameter (0.0f, juce::sendNotification);
+
+                // Bande dynamique : 1 kHz à -14 dBFS, seuil -30, plage -6 → -6 dB à 1 kHz, le reste intact ;
+                // seuil 0 (jamais atteint) → aucun effet.
+                eq->param (ondefx::EqPlugin::bandId (3, "gain"))->setParameter (0.0f, juce::sendNotification);
+                eq->param (ondefx::EqPlugin::bandId (3, "dyn"))->setParameter (1.0f, juce::sendNotification);
+                eq->param (ondefx::EqPlugin::bandId (3, "thr"))->setParameter (-30.0f, juce::sendNotification);
+                eq->param (ondefx::EqPlugin::bandId (3, "range"))->setParameter (-6.0f, juce::sendNotification);
+                const auto dyn = renderTrack ("eq-dynamique");
+                const double y1k = toneDb (dyn, 48000, 1000) - toneDb (flat, 48000, 1000), y8k = toneDb (dyn, 48000, 8000) - toneDb (flat, 48000, 8000);
+                eq->param (ondefx::EqPlugin::bandId (3, "thr"))->setParameter (0.0f, juce::sendNotification);
+                const double idle = toneDb (renderTrack ("eq-dynamique-repos"), 48000, 1000) - toneDb (flat, 48000, 1000);
+                check (std::abs (y1k + 6.0) < 0.5 && std::abs (y8k) < 0.5 && std::abs (idle) < 0.1,
+                       U ("Onde EQ : bande dynamique → 1 kHz ") + juce::String (y1k, 2) + U (" dB (attendu -6), 8 kHz ") + juce::String (y8k, 2)
+                       + U (" dB, sous le seuil ") + juce::String (idle, 2) + " dB");
+                eq->param (ondefx::EqPlugin::bandId (3, "dyn"))->setParameter (0.0f, juce::sendNotification);
                 if (auto e = ondefx::createEditor (*eq)) { pump (300); snapshot (*e, dir.getChildFile ("14-onde-eq.png")); }
                 // Les réglages sont enregistrés avec le projet.
                 eq->param (ondefx::EqPlugin::bandId (2, "gain"))->setParameter (-5.5f, juce::sendNotification);
@@ -1676,6 +1719,24 @@ private:
                 const auto out = renderTrack ("comp");
                 const double level = toneDb (out, 48000, 1000);
                 check (std::abs (level + 19.5) < 1.0, U ("Onde Comp : -6 dBFS, seuil -24, taux 4:1 → ") + juce::String (level, 2) + U (" dBFS (attendu -19,5)"));
+                // Détection RMS : un sinus à -6 dBFS crête vaut -9 dB RMS → -6 - (15 × 3/4) = -17,25 dBFS.
+                comp->param ("detect")->setParameter (1.0f, juce::sendNotification);
+                const double rmsLevel = toneDb (renderTrack ("comp-rms"), 48000, 1000);
+                comp->param ("detect")->setParameter (0.0f, juce::sendNotification);
+                check (std::abs (rmsLevel + 17.25) < 0.75, U ("Onde Comp : détection RMS → ") + juce::String (rmsLevel, 2) + U (" dBFS (attendu -17,25)"));
+                // Anticipation : latence de 5 ms déclarée (compensée par le moteur), même niveau.
+                comp->param ("lookahead")->setParameter (1.0f, juce::sendNotification);
+                const double laLevel = toneDb (renderTrack ("comp-anticipation"), 48000, 1000);
+                check (std::abs (comp->getLatencySeconds() * 1000.0 - 5.0) < 0.01 && std::abs (laLevel + 19.5) < 1.0,
+                       U ("Onde Comp : anticipation → latence ") + juce::String (comp->getLatencySeconds() * 1000.0, 1) + U (" ms, niveau ") + juce::String (laLevel, 2) + " dBFS");
+                comp->param ("lookahead")->setParameter (0.0f, juce::sendNotification);
+                // Styles et relâchement auto : le niveau établi reste celui du réglage (pas de dérive).
+                comp->param ("style")->setParameter (1.0f, juce::sendNotification);
+                comp->param ("autorel")->setParameter (1.0f, juce::sendNotification);
+                const double optoLevel = toneDb (renderTrack ("comp-opto"), 48000, 1000);
+                comp->param ("style")->setParameter (0.0f, juce::sendNotification);
+                comp->param ("autorel")->setParameter (0.0f, juce::sendNotification);
+                check (std::abs (optoLevel + 19.5) < 1.0, U ("Onde Comp : style opto + relâchement auto → ") + juce::String (optoLevel, 2) + " dBFS");
                 if (auto e = ondefx::createEditor (*comp)) { pump (200); snapshot (*e, dir.getChildFile ("15-onde-comp.png")); }
                 compPtr->deleteFromParent();
             }
@@ -1690,6 +1751,56 @@ private:
                 const float pk = peakDb (out);
                 check (pk <= -0.99f && pk > -1.5f && std::abs (lim->getLatencySeconds() * 1000.0 - 1.5) < 0.1,
                        U ("Onde Limiteur : entrée +6 dBFS, plafond -1 → crête ") + juce::String (pk, 2) + U (" dBFS, latence ") + juce::String (lim->getLatencySeconds() * 1000.0, 2) + " ms");
+
+                // Sonie (EBU R128) : 1 kHz à -20 dBFS sur les deux canaux = -20,0 LUFS.
+                const auto quiet = dir.getChildFile ("sinus-20.wav");
+                writeTones (quiet, { { 1000.0, 0.1f } }, 0.0, true);
+                for (auto* c : t->getClips()) c->removeFromParent();
+                t->insertWaveClip ("calme", quiet, { { te::TimePosition(), te::TimePosition::fromSeconds (4.0) }, te::TimeDuration() }, false);
+                lim->param ("input")->setParameter (0.0f, juce::sendNotification);
+                // Le rendu hors ligne travaille sur une copie de l'effet : les mesures se lisent sur une
+                // instance à part, alimentée directement avec le fichier rendu (blocs de 512).
+                auto meterPtr = ed.getPluginCache().createNewPlugin (ondefx::LimiterPlugin::xmlTypeName, {});
+                auto* meter = dynamic_cast<ondefx::LimiterPlugin*> (meterPtr.get());
+                auto measure = [&] (juce::AudioBuffer<float> b, bool truePeak, int upTo = 1 << 30)
+                {
+                    meter->param ("ceiling")->setParameter (-1.0f, juce::sendNotification);
+                    meter->param ("truepeak")->setParameter (truePeak ? 1.0f : 0.0f, juce::sendNotification);
+                    meter->initialise ({ te::TimePosition(), 48000.0, 512 });
+                    for (int s = 0; s < std::min (upTo, b.getNumSamples()); s += 512)
+                    {
+                        te::PluginRenderContext rc (&b, s, std::min (512, b.getNumSamples() - s), nullptr, 0.0, {}, true, false, true, false);
+                        meter->applyToBuffer (rc);
+                    }
+                    return b;
+                };
+                const auto qb = renderTrack ("sonie");
+                measure (qb, true, (int) (48000 * 3.5));
+                const float li = meter->integratedLufs.load(), lm = meter->momentaryLufs.load(), ls = meter->shortTermLufs.load();
+                check (std::abs (li + 20.0f) < 0.3f && std::abs (lm + 20.0f) < 0.3f && std::abs (ls + 20.0f) < 0.5f,
+                       U ("Onde Limiteur : sonie d'un 1 kHz à -20 dBFS → intégrée ") + juce::String (li, 2) + U (", momentanée ")
+                       + juce::String (lm, 2) + U (", court terme ") + juce::String (ls, 2) + " LUFS");
+
+                // Crête vraie : sinus à fs/4 déphasé de 45° → échantillons à -3 dBFS, crête réelle à 0 dBTP.
+                const auto isp = dir.getChildFile ("sinus-inter-echantillons.wav");
+                writeTones (isp, { { 12000.0, 1.0f } }, juce::MathConstants<double>::pi / 4.0, true);
+                for (auto* c : t->getClips()) c->removeFromParent();
+                t->insertWaveClip ("isp", isp, { { te::TimePosition(), te::TimePosition::fromSeconds (4.0) }, te::TimeDuration() }, false);
+                // Mesure de la crête vraie d'un rendu : l'instance de mesure, sans crête vraie, ne limite pas
+                // un signal sous -1 dBFS et lit la crête vraie de ce qui passe.
+                lim->param ("truepeak")->setParameter (0.0f, juce::sendNotification);
+                const auto offBuf = renderTrack ("limiteur-sans-tp");
+                const float spOff = peakDb (offBuf);
+                measure (offBuf, false);
+                const float tpOff = meter->truePeakMaxDb.load();
+                lim->param ("truepeak")->setParameter (1.0f, juce::sendNotification);
+                const auto onBuf = renderTrack ("limiteur-tp");
+                const float spOn = peakDb (onBuf);
+                measure (onBuf, false);
+                const float tpOn = meter->truePeakMaxDb.load();
+                check (std::abs (spOff + 3.01f) < 0.1f && std::abs (tpOff) < 0.2f && tpOn <= -0.85f && std::abs (spOn + 4.0f) < 0.3f,
+                       U ("Onde Limiteur : crête vraie → sans : échantillons ") + juce::String (spOff, 2) + U (" dBFS, mesurée ") + juce::String (tpOff, 2)
+                       + U (" dBTP ; avec : ") + juce::String (tpOn, 2) + U (" dBTP (plafond -1), échantillons ") + juce::String (spOn, 2) + " dBFS");
                 if (auto e = ondefx::createEditor (*lim)) { pump (200); snapshot (*e, dir.getChildFile ("16-onde-limiteur.png")); }
                 limPtr->deleteFromParent();
             }

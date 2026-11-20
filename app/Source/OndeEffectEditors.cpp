@@ -56,6 +56,75 @@ namespace ondefx
             juce::Slider slider;
         };
 
+        //==========================================================================
+        // Liste de choix liée à un paramètre à valeurs entières (mode, pente, style…).
+        class ParamChoice  : public juce::Component, private juce::Timer
+        {
+        public:
+            ParamChoice (te::AutomatableParameter* p, juce::String label) : param (p), title (std::move (label))
+            {
+                if (param != nullptr)
+                {
+                    const int count = juce::roundToInt (param->valueRange.end - param->valueRange.start) + 1;
+                    for (int i = 0; i < count; ++i) box.addItem (param->valueToString (param->valueRange.start + (float) i), i + 1);
+                    box.onChange = [this]
+                    {
+                        param->getEdit().getUndoManager().beginNewTransaction (title);
+                        param->setParameter (param->valueRange.start + (float) box.getSelectedItemIndex(), juce::sendNotification);
+                        if (onChange) onChange();
+                    };
+                }
+                addAndMakeVisible (box);
+                sync();
+                startTimerHz (10);
+            }
+            std::function<void()> onChange;
+            void resized() override { box.setBounds (getLocalBounds().withTrimmedTop (16)); }
+            void paint (juce::Graphics& g) override
+            {
+                g.setColour (theme::muted); g.setFont (theme::ui (11.0f));
+                g.drawText (title, getLocalBounds().removeFromTop (16), juce::Justification::centredLeft, true);
+            }
+        private:
+            void sync()
+            {
+                if (param == nullptr || box.isPopupActive()) return;
+                const int i = juce::roundToInt (param->getCurrentValue() - param->valueRange.start);
+                if (box.getSelectedItemIndex() != i) box.setSelectedItemIndex (i, juce::dontSendNotification);
+            }
+            void timerCallback() override { sync(); }
+            te::AutomatableParameter::Ptr param;
+            juce::String title;
+            juce::ComboBox box;
+        };
+
+        // Bouton marche/arrêt lié à un paramètre 0/1.
+        class ParamToggle  : public juce::TextButton, private juce::Timer
+        {
+        public:
+            ParamToggle (te::AutomatableParameter* p, const juce::String& text, juce::Colour on = theme::accent) : juce::TextButton (text), param (p)
+            {
+                setColour (juce::TextButton::buttonOnColourId, on.withAlpha (0.85f));
+                setColour (juce::TextButton::buttonColourId, juce::Colour (0xff2a2e35));
+                setColour (juce::TextButton::textColourOnId, juce::Colours::black);
+                juce::TextButton::onClick = [this]
+                {
+                    if (param == nullptr) return;
+                    param->getEdit().getUndoManager().beginNewTransaction (getButtonText());
+                    param->setParameter (param->getCurrentValue() > 0.5f ? 0.0f : 1.0f, juce::sendNotification);
+                    sync();
+                    if (onToggle) onToggle();
+                };
+                sync();
+                startTimerHz (10);
+            }
+            std::function<void()> onToggle;
+        private:
+            void sync() { setToggleState (param != nullptr && param->getCurrentValue() > 0.5f, juce::dontSendNotification); }
+            void timerCallback() override { sync(); }
+            te::AutomatableParameter::Ptr param;
+        };
+
         void drawPanelBackground (juce::Graphics& g, juce::Rectangle<int> r)
         {
             g.setGradientFill (juce::ColourGradient (juce::Colour (0xff23272e), 0, (float) r.getY(), juce::Colour (0xff17191d), 0, (float) r.getBottom(), false));
@@ -80,7 +149,7 @@ namespace ondefx
             {
                 spectrum.assign (fftSize / 2, -100.0f);
                 buildKnobs();
-                setSize (860, 470);
+                setSize (900, 480);
                 startTimerHz (30);
             }
 
@@ -125,20 +194,45 @@ namespace ondefx
                     g.setGradientFill (juce::ColourGradient (juce::Colour (0x553fa4ff), 0, gr.getY(), juce::Colour (0x103fa4ff), 0, gr.getBottom(), false));
                     g.fillPath (spec);
                 }
-                // Courbe de réponse.
-                juce::Path curve;
-                for (int x = (int) gr.getX(); x <= (int) gr.getRight(); x += 2)
+                // Courbe de réponse : réglée (pointillés) et réelle, quand des bandes dynamiques bougent.
+                auto responsePath = [&] (bool withDynamics)
                 {
-                    const float y = dbToY ((float) eq.responseDb (xToFreq ((float) x)));
-                    if (x == (int) gr.getX()) curve.startNewSubPath ((float) x, y); else curve.lineTo ((float) x, y);
+                    juce::Path curve;
+                    for (int x = (int) gr.getX(); x <= (int) gr.getRight(); x += 2)
+                    {
+                        const float y = dbToY ((float) eq.responseDb (xToFreq ((float) x), withDynamics));
+                        if (x == (int) gr.getX()) curve.startNewSubPath ((float) x, y); else curve.lineTo ((float) x, y);
+                    }
+                    return curve;
+                };
+                bool anyDynamic = false;
+                for (int b = 1; b < EqPlugin::numBands - 1; ++b)
+                    anyDynamic = anyDynamic || (eq.value (EqPlugin::bandId (b, "on")) > 0.5f && eq.value (EqPlugin::bandId (b, "dyn")) > 0.5f);
+                if (anyDynamic)
+                {
+                    juce::Path dashed;
+                    const float dashes[] = { 4.0f, 4.0f };
+                    juce::PathStrokeType (1.2f).createDashedStroke (dashed, responsePath (false), dashes, 2);
+                    g.setColour (juce::Colours::white.withAlpha (0.35f));
+                    g.fillPath (dashed);
                 }
                 g.setColour (juce::Colours::white.withAlpha (0.9f));
-                g.strokePath (curve, juce::PathStrokeType (2.0f, juce::PathStrokeType::curved));
-                // Points des bandes.
+                g.strokePath (responsePath (true), juce::PathStrokeType (2.0f, juce::PathStrokeType::curved));
+                // Points des bandes (et déplacement en cours des bandes dynamiques).
                 for (int b = 0; b < EqPlugin::numBands; ++b)
                 {
                     const auto c = nodePos (b);
                     const bool on = eq.value (EqPlugin::bandId (b, "on")) > 0.5f;
+                    if (on && ! EqPlugin::isCut (b) && eq.value (EqPlugin::bandId (b, "dyn")) > 0.5f)
+                    {
+                        const float target = dbToY (eq.value (EqPlugin::bandId (b, "gain")) + eq.value (EqPlugin::bandId (b, "range")));
+                        const float now = dbToY (eq.value (EqPlugin::bandId (b, "gain")) + eq.dynamicDb[b].load());
+                        g.setColour (bandColours[b].withAlpha (0.35f));
+                        g.drawLine (c.x, c.y, c.x, target, 1.5f);
+                        g.drawEllipse (c.x - 5.0f, target - 5.0f, 10.0f, 10.0f, 1.0f);
+                        g.setColour (bandColours[b]);
+                        g.drawLine (c.x, c.y, c.x, now, 3.0f);
+                    }
                     const float r = b == selected ? 9.0f : 7.0f;
                     g.setColour (on ? bandColours[b] : juce::Colour (0xff4a4f58));
                     g.fillEllipse (c.x - r, c.y - r, 2 * r, 2 * r);
@@ -149,10 +243,11 @@ namespace ondefx
                 }
                 g.restoreState();
                 // Titre de la bande sélectionnée.
-                const char* names[] = { "Coupe-bas (24 dB/oct)", "Étagère grave", "Cloche", "Cloche", "Cloche", "Étagère aiguë", "Coupe-haut (24 dB/oct)" };
+                const char* names[] = { "Coupe-bas", "Étagère grave", "Cloche", "Cloche", "Cloche", "Étagère aiguë", "Coupe-haut" };
+                auto title = U8 ("Bande ") + juce::String (selected + 1) + U8 (" · ") + U8 (names[selected]);
+                if (! EqPlugin::isCut (selected) && eq.value (EqPlugin::bandId (selected, "dyn")) > 0.5f) title << " · dynamique";
                 g.setColour (bandColours[selected]); g.setFont (theme::ui (13.0f, true));
-                g.drawText (U8 ("Bande ") + juce::String (selected + 1) + U8 (" · ") + juce::String::fromUTF8 (names[selected]),
-                            12, graph().getBottom() + 8, 300, 20, juce::Justification::centredLeft);
+                g.drawText (title, 12, graph().getBottom() + 6, 300, 18, juce::Justification::centredLeft);
             }
 
             void resized() override { layoutKnobs(); }
@@ -219,21 +314,41 @@ namespace ondefx
 
             void buildKnobs()
             {
-                knobs.clear();
+                knobs.clear(); options.clear();
                 const auto c = bandColours[selected];
-                knobs.add (new Knob (eq.param (EqPlugin::bandId (selected, "freq")), U8 ("Fréquence"), c));
-                if (auto* p = eq.param (EqPlugin::bandId (selected, "gain"))) knobs.add (new Knob (p, "Gain", c));
-                if (auto* p = eq.param (EqPlugin::bandId (selected, "q")))    knobs.add (new Knob (p, "Q", c));
+                auto id = [this] (const char* what) { return EqPlugin::bandId (selected, what); };
+                knobs.add (new Knob (eq.param (id ("freq")), U8 ("Fréquence"), c));
+                if (auto* p = eq.param (id ("gain")))  knobs.add (new Knob (p, "Gain", c));
+                if (auto* p = eq.param (id ("q")))     knobs.add (new Knob (p, "Q", c));
+                if (auto* p = eq.param (id ("thr")))   knobs.add (new Knob (p, "Seuil dyn.", c));
+                if (auto* p = eq.param (id ("range"))) knobs.add (new Knob (p, "Plage dyn.", c));
                 knobs.add (new Knob (eq.param ("out"), "Sortie"));
                 for (auto* k : knobs) addAndMakeVisible (k);
+                options.add (new ParamChoice (eq.param (id ("mode")), U8 ("Canaux")));
+                if (auto* p = eq.param (id ("slope"))) options.add (new ParamChoice (p, "Pente"));
+                if (auto* p = eq.param (id ("dyn")))
+                {
+                    auto* t = new ParamToggle (p, "Dynamique", c);
+                    t->onToggle = [this] { repaint(); };
+                    options.add (t);
+                }
+                for (auto* o : options) addAndMakeVisible (o);
                 layoutKnobs();
             }
             void layoutKnobs()
             {
-                auto r = getLocalBounds().removeFromBottom (92).reduced (12, 6);
-                r.removeFromLeft (300);
-                for (auto* k : knobs) { k->setBounds (r.removeFromLeft (100)); r.removeFromLeft (8); }
-                if (! knobs.isEmpty()) knobs.getLast()->setBounds (getLocalBounds().removeFromBottom (92).reduced (12, 6).removeFromRight (100));
+                auto area = getLocalBounds().removeFromBottom (92).reduced (12, 6);
+                if (! knobs.isEmpty()) knobs.getLast()->setBounds (area.removeFromRight (88));
+                auto left = area.removeFromLeft (300).withTrimmedTop (22);
+                for (auto* o : options)
+                {
+                    auto cell = left.removeFromLeft (140);
+                    left.removeFromLeft (10);
+                    if (dynamic_cast<ParamToggle*> (o) != nullptr) cell = cell.withTrimmedTop (18).withHeight (26);
+                    else cell = cell.withHeight (42);
+                    o->setBounds (cell);
+                }
+                for (int i = 0; i < knobs.size() - 1; ++i) { knobs[i]->setBounds (area.removeFromLeft (84)); area.removeFromLeft (4); }
             }
 
             void timerCallback() override
@@ -266,6 +381,7 @@ namespace ondefx
             EqPlugin& eq;
             te::Plugin::Ptr keepAlive { &eq };
             juce::OwnedArray<Knob> knobs;
+            juce::OwnedArray<juce::Component> options;
             int selected = 3, dragging = -1;
             static constexpr int fftOrder = 12, fftSize = 1 << fftOrder;
             juce::dsp::FFT fft { fftOrder };
@@ -279,16 +395,26 @@ namespace ondefx
         public:
             explicit CompEditor (CompPlugin& p) : comp (p)
             {
-                const char* ids[] = { "threshold", "ratio", "attack", "release", "knee", "makeup", "mix", "scHpf" };
-                const char* labels[] = { "Seuil", "Taux", "Attaque", "Relâchement", "Genou", "Gain", "Mélange", "Filtre détection" };
-                for (int i = 0; i < 8; ++i) addAndMakeVisible (knobs.add (new Knob (comp.param (ids[i]), juce::String::fromUTF8 (labels[i]))));
-                setSize (720, 360);
+                const char* ids[] = { "threshold", "ratio", "attack", "release", "knee", "makeup", "mix", "scHpf", "link" };
+                const char* labels[] = { "Seuil", "Taux", "Attaque", "Relâchement", "Genou", "Gain", "Mélange", "Filtre détection", "Liaison stéréo" };
+                for (int i = 0; i < 9; ++i) addAndMakeVisible (knobs.add (new Knob (comp.param (ids[i]), juce::String::fromUTF8 (labels[i]))));
+                options.add (new ParamChoice (comp.param ("detect"), juce::String::fromUTF8 ("Détection")));
+                options.add (new ParamChoice (comp.param ("style"), "Style"));
+                options.add (new ParamToggle (comp.param ("autorel"), juce::String::fromUTF8 ("Relâchement auto")));
+                auto* look = new ParamToggle (comp.param ("lookahead"), "Anticipation 5 ms");
+                // La latence change : le moteur recalcule la compensation de délai.
+                look->onToggle = [this] { comp.edit.restartPlayback(); };
+                options.add (look);
+                options.add (new ParamToggle (comp.param ("listen"), juce::String::fromUTF8 ("Écouter la détection"), juce::Colour (0xffe5a04e)));
+                for (auto* o : options) addAndMakeVisible (o);
+                setSize (820, 420);
                 startTimerHz (30);
             }
             void paint (juce::Graphics& g) override
             {
                 drawPanelBackground (g, getLocalBounds());
-                drawTitle (g, getLocalBounds().removeFromTop (40).reduced (12, 6), "Onde Comp", juce::String::fromUTF8 ("Compresseur · genou progressif, détection filtrable, mélange parallèle"));
+                drawTitle (g, getLocalBounds().removeFromTop (40).reduced (12, 6), "Onde Comp",
+                           juce::String::fromUTF8 ("Crête ou RMS · styles propre, opto, vintage · relâchement auto · anticipation · mélange parallèle"));
                 // Courbe de transfert.
                 auto r = curveArea().toFloat();
                 g.setColour (juce::Colour (0xff111316)); g.fillRoundedRectangle (r, 6.0f);
@@ -319,10 +445,17 @@ namespace ondefx
             }
             void resized() override
             {
-                auto r = getLocalBounds().withTrimmedTop (48).reduced (12, 8);
+                auto bottom = getLocalBounds().removeFromBottom (70).reduced (12, 10);
+                for (int i = 0; i < options.size(); ++i)
+                {
+                    auto cell = bottom.removeFromLeft (i < 2 ? 130 : 160);
+                    bottom.removeFromLeft (10);
+                    options[i]->setBounds (i < 2 ? cell : cell.withTrimmedTop (18).withHeight (28));
+                }
+                auto r = getLocalBounds().withTrimmedTop (48).withTrimmedBottom (70).reduced (12, 4);
                 r.removeFromLeft (curveArea().getWidth() + 70);
-                const int w = r.getWidth() / 4, h = r.getHeight() / 2;
-                for (int i = 0; i < knobs.size(); ++i) knobs[i]->setBounds (r.getX() + (i % 4) * w, r.getY() + (i / 4) * h, w, h);
+                const int w = r.getWidth() / 5, h = r.getHeight() / 2;
+                for (int i = 0; i < knobs.size(); ++i) knobs[i]->setBounds (r.getX() + (i % 5) * w, r.getY() + (i / 5) * h, w, h);
             }
         private:
             juce::Rectangle<int> curveArea() const { return { 12, 52, 250, 250 }; }
@@ -336,6 +469,7 @@ namespace ondefx
             CompPlugin& comp;
             te::Plugin::Ptr keepAlive { &comp };
             juce::OwnedArray<Knob> knobs;
+            juce::OwnedArray<juce::Component> options;
             float shownGr = 0;
         };
 
@@ -345,17 +479,24 @@ namespace ondefx
         public:
             explicit LimiterEditor (LimiterPlugin& p) : lim (p)
             {
-                addAndMakeVisible (knobs.add (new Knob (lim.param ("input"), juce::String::fromUTF8 ("Gain d'entrée"))));
+                addAndMakeVisible (knobs.add (new Knob (lim.param ("input"), U8 ("Gain d'entrée"))));
                 addAndMakeVisible (knobs.add (new Knob (lim.param ("ceiling"), "Plafond", juce::Colour (0xffe8473f))));
-                addAndMakeVisible (knobs.add (new Knob (lim.param ("release"), juce::String::fromUTF8 ("Relâchement"))));
-                setSize (560, 300);
+                addAndMakeVisible (knobs.add (new Knob (lim.param ("release"), U8 ("Relâchement"))));
+                truePeak = std::make_unique<ParamToggle> (lim.param ("truepeak"), U8 ("Crête vraie (dBTP)"));
+                target = std::make_unique<ParamChoice> (lim.param ("target"), U8 ("Cible de sonie"));
+                resetButton.onClick = [this] { lim.resetLoudness(); };
+                addAndMakeVisible (*truePeak);
+                addAndMakeVisible (*target);
+                addAndMakeVisible (resetButton);
+                setSize (660, 440);
                 startTimerHz (30);
             }
             void paint (juce::Graphics& g) override
             {
                 drawPanelBackground (g, getLocalBounds());
                 drawTitle (g, getLocalBounds().removeFromTop (40).reduced (12, 6), "Onde Limiteur",
-                           juce::String::fromUTF8 ("Anticipation 1,5 ms (compensée) · plafond garanti"));
+                           U8 ("Anticipation 1,5 ms (compensée) · crête vraie x4 · sonie EBU R128"));
+                const bool tp = lim.value ("truepeak") > 0.5f;
                 auto bar = [&] (juce::Rectangle<float> r, float v, float range, juce::Colour c, const juce::String& label, const juce::String& text)
                 {
                     g.setColour (juce::Colour (0xff111316)); g.fillRoundedRectangle (r, 4.0f);
@@ -365,28 +506,68 @@ namespace ondefx
                     g.setColour (theme::text); g.setFont (theme::mono (12.0f, true));
                     g.drawText (text, r.translated (0, -16).withHeight (14), juce::Justification::right);
                 };
-                bar ({ 24.0f, 82.0f, 512.0f, 18.0f }, shownGr, 12.0f, juce::Colour (0xffe5a04e), U8 ("Réduction de gain"), (shownGr < 0.05f ? juce::String ("0.0") : "-" + juce::String (shownGr, 1)) + " dB");
-                bar ({ 24.0f, 132.0f, 512.0f, 18.0f }, shownOut + 48.0f, 48.0f, theme::play, U8 ("Sortie (crête)"), juce::String (shownOut, 1) + " dBFS");
+                const float w = (float) getWidth() - 48.0f;
+                bar ({ 24.0f, 74.0f, w, 16.0f }, shownGr, 12.0f, juce::Colour (0xffe5a04e), U8 ("Réduction de gain"),
+                     (shownGr < 0.05f ? juce::String ("0.0") : "-" + juce::String (shownGr, 1)) + " dB");
+                const float maxTp = lim.truePeakMaxDb.load();
+                const bool over = maxTp > lim.value ("ceiling") + 0.05f;
+                bar ({ 24.0f, 120.0f, w, 16.0f }, shownTp + 48.0f, 48.0f, over ? juce::Colour (0xffe8473f) : theme::play,
+                     U8 ("Sortie, crête vraie (max ") + (maxTp <= -99.0f ? juce::String ("-") : juce::String (maxTp, 1)) + ")",
+                     juce::String (shownTp, 1) + (tp ? " dBTP" : " dBTP (non limitée)"));
+
+                // Sonie : momentanée, court terme, intégrée, écart à la cible.
+                auto box = [&] (juce::Rectangle<float> r, const juce::String& label, float lufs, bool big)
+                {
+                    g.setColour (juce::Colour (0xff111316)); g.fillRoundedRectangle (r, 6.0f);
+                    g.setColour (theme::muted); g.setFont (theme::ui (11.0f));
+                    g.drawText (label, r.removeFromTop (20).reduced (8, 0), juce::Justification::centredLeft);
+                    g.setColour (big ? theme::text : theme::text.withAlpha (0.85f)); g.setFont (theme::mono (big ? 26.0f : 20.0f, true));
+                    g.drawText (lufs <= -99.0f ? juce::String ("--.-") : juce::String (lufs, 1), r.reduced (8, 0), juce::Justification::centredLeft);
+                    g.setColour (theme::dim); g.setFont (theme::ui (11.0f));
+                    g.drawText ("LUFS", r.reduced (8, 0), juce::Justification::centredRight);
+                };
+                const auto lr = loudnessArea().toFloat();
+                const float bw = (lr.getWidth() - 20.0f) / 3.0f;
+                box ({ lr.getX(), lr.getY(), bw, 70.0f }, U8 ("Momentanée (400 ms)"), lim.momentaryLufs.load(), false);
+                box ({ lr.getX() + bw + 10.0f, lr.getY(), bw, 70.0f }, "Court terme (3 s)", lim.shortTermLufs.load(), false);
+                const float integrated = lim.integratedLufs.load();
+                box ({ lr.getX() + 2 * (bw + 10.0f), lr.getY(), bw, 70.0f }, U8 ("Intégrée"), integrated, true);
+                if (integrated > -99.0f)
+                {
+                    const float diff = integrated - lim.targetLufs();
+                    g.setColour (std::abs (diff) <= 1.0f ? theme::play : juce::Colour (0xffe5a04e));
+                    g.setFont (theme::ui (12.5f, true));
+                    g.drawText (U8 ("Écart à la cible : ") + (diff > 0 ? "+" : "") + juce::String (diff, 1) + " LU",
+                                juce::Rectangle<float> (lr.getX(), lr.getY() + 76.0f, lr.getWidth(), 18.0f), juce::Justification::centredLeft);
+                }
             }
             void resized() override
             {
-                auto r = getLocalBounds().removeFromBottom (120).reduced (60, 8);
+                const auto lr = loudnessArea();
+                target->setBounds (lr.getRight() - 290, lr.getBottom() - 46, 180, 44);
+                resetButton.setBounds (lr.getRight() - 100, lr.getBottom() - 26, 100, 24);
+                auto r = getLocalBounds().removeFromBottom (130).reduced (24, 8);
+                truePeak->setBounds (r.removeFromRight (150).withSizeKeepingCentre (150, 28));
                 const int w = r.getWidth() / 3;
                 for (int i = 0; i < knobs.size(); ++i) knobs[i]->setBounds (r.getX() + i * w, r.getY(), w, r.getHeight());
             }
         private:
             static juce::String U8 (const char* s) { return juce::String::fromUTF8 (s); }
+            juce::Rectangle<int> loudnessArea() const { return { 24, 152, getWidth() - 48, 148 }; }
             void timerCallback() override
             {
-                const float gr = lim.gainReductionDb.load(), out = juce::jmax (-48.0f, lim.outputDb.load());
+                const float gr = lim.gainReductionDb.load(), tp = juce::jmax (-48.0f, lim.truePeakDb.load());
                 shownGr = gr > shownGr ? gr : shownGr * 0.9f;
-                shownOut = out > shownOut ? out : shownOut - 0.8f;
-                repaint (0, 60, getWidth(), 100);
+                shownTp = tp > shownTp ? tp : shownTp - 0.8f;
+                repaint (0, 50, getWidth(), 260);
             }
             LimiterPlugin& lim;
             te::Plugin::Ptr keepAlive { &lim };
             juce::OwnedArray<Knob> knobs;
-            float shownGr = 0, shownOut = -48;
+            std::unique_ptr<ParamToggle> truePeak;
+            std::unique_ptr<ParamChoice> target;
+            juce::TextButton resetButton { U8 ("Remettre à zéro") };
+            float shownGr = 0, shownTp = -48;
         };
     }
 
