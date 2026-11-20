@@ -272,6 +272,7 @@ namespace ondefx
         }
         const float lowCutC = onePoleCoef (90.0f, rate);
         const double lfoInc = 0.7 / rate;
+        float modNow[4] {};
         for (int s = 0; s < fc.bufferNumSamples; ++s)
         {
             const float inL = buf.getSample (0, fc.bufferStartSample + s), inR = buf.getSample (chans - 1, fc.bufferStartSample + s);
@@ -288,11 +289,13 @@ namespace ondefx
                 x = delayed - d.g * v;
                 d.pos = (d.pos + 1) % (int) d.buf.size();
             }
+            if ((s & 15) == 0)          // modulation lente (0,7 Hz) : recalculée tous les 16 échantillons
+                for (int m = 0; m < 4; ++m) modNow[m] = 5.0f * (float) std::sin (juce::MathConstants<double>::twoPi * (lfoPhase + m * 0.25));
             // Lecture des 8 lignes (les 4 premières légèrement modulées), amortissement des aigus.
             float o[numLines];
             for (int i = 0; i < numLines; ++i)
             {
-                const float mod = i < 4 ? 5.0f * (float) std::sin (juce::MathConstants<double>::twoPi * (lfoPhase + i * 0.25)) : 0.0f;
+                const float mod = i < 4 ? modNow[i] : 0.0f;
                 float r = (float) pos[i] - (len[i] + mod);
                 const int L = (int) lines[i].size();
                 while (r < 0) r += (float) L;

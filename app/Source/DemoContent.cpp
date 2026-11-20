@@ -1,4 +1,6 @@
 #include "DemoContent.h"
+#include "OndeSynth.h"
+#include "Chains.h"
 
 namespace
 {
@@ -94,12 +96,17 @@ namespace demo
         drums->insertWaveClip ("Batterie A", drumFile,
                                { { te::TimePosition(), songEnd }, te::TimeDuration() }, false);
 
-        // 2. Basse — clip MIDI joué par le synthé 4OSC de Tracktion.
+        // 2. Basse — clip MIDI joué par Onde Synth (son « Basse synthé »), avec ses commandes rapides.
         auto* bass = trackAt (edit, 1);
         bass->setName ("Basse");
         bass->setColour (juce::Colour (0xff6ea8fe));
-        if (auto synth = edit.getPluginCache().createNewPlugin (te::FourOscPlugin::xmlTypeName, {}))
+        if (auto synth = edit.getPluginCache().createNewPlugin (ondefx::SynthPlugin::xmlTypeName, {}))
+        {
             bass->pluginList.insertPlugin (synth, 0, nullptr);
+            if (auto* s = dynamic_cast<ondefx::SynthPlugin*> (synth.get()))
+                if (auto* preset = ondefx::SynthPlugin::findPreset (juce::String::fromUTF8 ("Basse synthé"))) s->applyPreset (*preset);
+            chains::rebuildMacros (*bass);
+        }
         if (auto clip = bass->insertMIDIClip ("Basse couplet", { te::TimePosition(), songEnd }, nullptr))
         {
             const int roots[] = { 38, 38, 34, 36, 38, 38, 33, 36 };   // Ré, Ré, Si♭, Do, Ré, Ré, La, Do

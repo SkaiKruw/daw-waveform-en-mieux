@@ -1,4 +1,5 @@
 #include "Panels.h"
+#include "OndeSynth.h"
 #include "Chains.h"
 #include "ParamControls.h"
 #include "LibraryPanel.h"
@@ -587,6 +588,7 @@ void Inspector::rebuild()
         sig << sel->itemID.toString(); for (auto p : sel->pluginList.getPlugins()) sig << "." << p->itemID.toString() << (p->isEnabled() ? "e" : "b");
         for (auto m : chains::quickControls (*sel)) sig << "m" << m->paramID;
         sig << "c" << chains::currentChain (*sel);
+        for (auto p : sel->pluginList.getPlugins()) if (auto* s = dynamic_cast<ondefx::SynthPlugin*> (p)) sig << "s" << s->getPresetName();
     }
     for (auto* fx : ctx.getFxTracks()) sig << "|fx" << fx->itemID.toString() << fx->getName();
     if (sig == signature && (sel ? sel->itemID : te::EditItemID()) == trackID) { syncValues(); return; }
@@ -601,7 +603,8 @@ void Inspector::rebuild()
         for (int i = 0; i < slots.size(); ++i)
         {
             const bool has = i < ins.size();
-            juce::String txt = has ? ((dynamic_cast<SandboxPlugin*> (ins[i]) ? U ("◆ ") : juce::String()) + ins[i]->getName()) : juce::String();
+            // Premier emplacement libre : invitation à ajouter un effet (les suivants restent vides).
+            juce::String txt = has ? ((dynamic_cast<SandboxPlugin*> (ins[i]) ? U ("◆ ") : juce::String()) + ins[i]->getName()) : (i == ins.size() ? U ("+ Ajouter un effet") : juce::String());
             slots[i]->setButtonText (txt);
             slots[i]->setColour (juce::TextButton::textColourOffId, has ? (ins[i]->isEnabled() ? theme::text : theme::dim) : theme::muted);
             slots[i]->setTooltip (has ? U ("Clic : ouvrir · clic droit : options") : U ("Clic : ajouter un effet d'insert"));
@@ -609,7 +612,9 @@ void Inspector::rebuild()
             bypass[i]->setToggleState (has && ins[i]->isEnabled(), juce::dontSendNotification);
         }
         auto* inst = ctx.getInstrument (*t);
-        instrumentBtn.setButtonText (inst ? ((dynamic_cast<SandboxPlugin*> (inst) ? U ("◆ ") : juce::String()) + inst->getName()) : U ("Aucun instrument"));
+        juce::String instText = inst ? ((dynamic_cast<SandboxPlugin*> (inst) ? U ("◆ ") : juce::String()) + inst->getName()) : U ("Aucun instrument");
+        if (auto* synth = dynamic_cast<ondefx::SynthPlugin*> (inst)) instText << U (" · ") << synth->getPresetName();   // le son, pas seulement l'instrument
+        instrumentBtn.setButtonText (instText);
         instrumentBtn.setTooltip (U ("Clic : ouvrir l'instrument · clic droit : changer d'instrument"));
 
         // Commandes rapides : la chaîne choisie et les gros boutons de la piste.
@@ -703,6 +708,7 @@ void Inspector::timerCallback()
 {
     if (track() == nullptr && ctx.getSelectedTrack() != nullptr) { rebuild(); return; }
     if (track() != ctx.getSelectedTrack()) { rebuild(); return; }
+    if (++ticks % 10 == 0) { rebuild(); return; }      // changements faits ailleurs (son choisi dans Onde Synth…) : rebuild() ne refait rien si rien n'a changé
     syncValues();
     meter.setLevels (client.getAndClearAudioLevel (0).dB, client.getAndClearAudioLevel (1).dB);
 }

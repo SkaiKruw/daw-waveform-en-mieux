@@ -1,5 +1,6 @@
 #include "OndeSynth.h"
 #include "ParamControls.h"
+#include "Chains.h"
 #include "Theme.h"
 
 namespace ondefx
@@ -289,6 +290,12 @@ namespace ondefx
         const float vibDepth = value ("vibrato") * 25.0f + modWheel * 40.0f;      // centièmes de demi-ton
         const float bend = std::pow (2.0f, pitchBend * 2.0f / 12.0f);
         const float tineCoef = coefFor (0.25f, fs), damperCoef = coefFor (0.12f, fs), hammerCoef = coefFor (0.006f, fs);
+        // Batterie : décroissances calculées une fois par bloc (et non à chaque échantillon).
+        const float dkK = value ("ddecay") * (kit == 1 ? 1.6f : kit == 2 ? 0.7f : 1.0f);
+        const float cKickPitch = coefFor (kit == 1 ? 0.12f : 0.06f, fs), cKick = coefFor ((kit == 1 ? 1.4f : 0.45f) * dkK, fs), cClick = coefFor (0.004f, fs);
+        const float cSnTone = coefFor (0.12f * dkK, fs), cSnNoise = coefFor ((kit == 1 ? 0.22f : 0.18f) * dkK, fs), cClap = coefFor (0.2f * dkK, fs);
+        const float cHatC = coefFor (0.06f * dkK, fs), cHatO = coefFor (0.45f * dkK, fs), cCrash = coefFor (1.8f * dkK, fs), cRide = coefFor (1.3f * dkK, fs), cBell = coefFor (0.25f * dkK, fs);
+        const float cRim = coefFor (0.03f * dkK, fs), cTomPitch = coefFor (0.15f, fs), cTom = coefFor (0.5f * dkK, fs), cTomClick = coefFor (0.01f, fs);
 
         for (auto& vp : voices)
         {
@@ -307,7 +314,7 @@ namespace ondefx
                 if (v.engine == 0)
                 {
                     double inc[maxUnison][2];
-                    float panU[maxUnison];
+                    float panU[maxUnison], gainLU[maxUnison], gainRU[maxUnison];
                     for (int u = 0; u < unison; ++u)
                     {
                         const float pos = unison > 1 ? 2.0f * u / (unison - 1) - 1.0f : 0.0f;
@@ -315,6 +322,7 @@ namespace ondefx
                         inc[u][0] = freq * std::pow (2.0, det / 1200.0) / fs;
                         inc[u][1] = freq * std::pow (2.0, (semi2 * 100.0 + detune + det) / 1200.0) / fs;
                         panU[u] = pos * width;
+                        gainLU[u] = std::sqrt (0.5f * (1.0f - panU[u])); gainRU[u] = std::sqrt (0.5f * (1.0f + panU[u]));
                     }
                     const double subInc = freq * 0.5 / fs;
                     // Filtre : coupure modulée par l'enveloppe et le suivi du clavier (recalculée par morceau).
@@ -339,13 +347,13 @@ namespace ondefx
                                 s += o == 0 ? x * (1.0f - mix2) : x * mix2;
                                 ph += inc[u][o]; if (ph >= 1.0) ph -= 1.0;
                             }
-                            l += s * std::sqrt (0.5f * (1.0f - panU[u]));
-                            r += s * std::sqrt (0.5f * (1.0f + panU[u]));
+                            l += s * gainLU[u];
+                            r += s * gainRU[u];
                         }
                         l *= uNorm; r *= uNorm;
                         const float subS = sub * (float) std::sin (twoPi * v.subPhase) * 0.7f;
                         v.subPhase += subInc; if (v.subPhase >= 1.0) v.subPhase -= 1.0;
-                        const float nz = noise * (random.nextFloat() * 2.0f - 1.0f) * 0.5f;
+                        const float nz = noise > 0.0f ? noise * (random.nextFloat() * 2.0f - 1.0f) * 0.5f : 0.0f;
                         l += subS + nz; r += subS + nz;
                         l = v.f2[0].process (v.f1[0].process (l, a11, a21, a31), a12, a22, a32);
                         r = v.f2[1].process (v.f1[1].process (r, a11, a21, a31), a12, a22, a32);
@@ -405,13 +413,14 @@ namespace ondefx
                         R[start + c0 + i] += e * gr * 1.41f;
                     }
                     for (int p = 0; p < v.partials; ++p) { v.strings[p][0].normalise(); v.strings[p][1].normalise(); }
+                    // Les partiels aigus s'éteignent les premiers : ceux devenus inaudibles ne sont plus calculés.
+                    while (v.partials > 1 && v.fastEnv[v.partials - 1] + v.slowEnv[v.partials - 1] < 1.0e-5f) --v.partials;
                     if (v.damper < 1.0e-4f || (v.partials > 0 && v.slowEnv[0] < 1.0e-4f)) v.active = false;
                 }
                 else
                 {
                     // Batterie synthétisée : chaque son est calculé à partir de quelques oscillateurs et de bruit.
                     const float tuneK = dtune * (kit == 1 ? 0.8f : kit == 2 ? 1.15f : 1.0f);
-                    const float decK = ddecay * (kit == 1 ? 1.6f : kit == 2 ? 0.7f : 1.0f);
                     for (int i = 0; i < m; ++i)
                     {
                         const float nz = random.nextFloat() * 2.0f - 1.0f;
@@ -424,9 +433,9 @@ namespace ondefx
                                 v.dPhase[0] += f / fs; if (v.dPhase[0] >= 1.0) v.dPhase[0] -= 1.0;
                                 s = (float) std::sin (twoPi * v.dPhase[0]) * v.dEnv + nz * v.dEnv2 * (kit == 2 ? 0.5f : 0.3f);
                                 if (kit == 1) s = std::tanh (s * 1.6f);
-                                v.dPitch *= coefFor (kit == 1 ? 0.12f : 0.06f, fs);
-                                v.dEnv *= coefFor ((kit == 1 ? 1.4f : 0.45f) * decK, fs);
-                                v.dEnv2 *= coefFor (0.004f, fs);
+                                v.dPitch *= cKickPitch;
+                                v.dEnv *= cKick;
+                                v.dEnv2 *= cClick;
                                 break;
                             }
                             case Drum::snare:
@@ -436,8 +445,8 @@ namespace ondefx
                                 v.nState1 += 0.35f * (nz - v.nState1);
                                 const float hp = nz - v.nState1;
                                 s = tone * v.dEnv * (kit == 2 ? 0.3f : 0.6f) + hp * v.dEnv2 * 0.9f;
-                                v.dEnv *= coefFor (0.12f * decK, fs);
-                                v.dEnv2 *= coefFor ((kit == 1 ? 0.22f : 0.18f) * decK, fs);
+                                v.dEnv *= cSnTone;
+                                v.dEnv2 *= cSnNoise;
                                 break;
                             }
                             case Drum::clap:
@@ -448,7 +457,7 @@ namespace ondefx
                                 v.nState1 += 0.3f * (nz - v.nState1);
                                 v.nState2 += 0.08f * (v.nState1 - v.nState2);
                                 s = (v.nState1 - v.nState2) * v.dEnv * burst * 2.2f;
-                                if (v.clapClock > 0.03f) v.dEnv *= coefFor (0.2f * decK, fs);
+                                if (v.clapClock > 0.03f) v.dEnv *= cClap;
                                 break;
                             }
                             case Drum::closedHat:
@@ -472,16 +481,14 @@ namespace ondefx
                                 const float hpCoef = bell ? 0.2f : 0.55f;
                                 v.nState1 += hpCoef * (metal - v.nState1);
                                 s = (bell ? v.nState1 : metal - v.nState1) * v.dEnv * (bell ? 0.6f : 0.45f);
-                                const float dec = v.drum == Drum::closedHat ? 0.06f : v.drum == Drum::openHat ? 0.45f : v.drum == Drum::crash ? 1.8f
-                                                : v.drum == Drum::ride ? 1.3f : 0.25f;
-                                v.dEnv *= coefFor (dec * decK, fs);
+                                v.dEnv *= v.drum == Drum::closedHat ? cHatC : v.drum == Drum::openHat ? cHatO : v.drum == Drum::crash ? cCrash : v.drum == Drum::ride ? cRide : cBell;
                                 break;
                             }
                             case Drum::rim:
                             {
                                 v.dPhase[0] += 1700.0 * tuneK / fs;
                                 s = (float) std::sin (twoPi * v.dPhase[0]) * v.dEnv + nz * v.dEnv * 0.3f;
-                                v.dEnv *= coefFor (0.03f * decK, fs);
+                                v.dEnv *= cRim;
                                 break;
                             }
                             case Drum::tom:
@@ -489,9 +496,9 @@ namespace ondefx
                                 const float base = (70.0f + (v.note - 41) * 9.0f) * tuneK;
                                 v.dPhase[0] += base * (1.0f + 0.6f * v.dPitch) / fs; if (v.dPhase[0] >= 1.0) v.dPhase[0] -= 1.0;
                                 s = (float) std::sin (twoPi * v.dPhase[0]) * v.dEnv + nz * v.dEnv2 * 0.2f;
-                                v.dPitch *= coefFor (0.15f, fs);
-                                v.dEnv *= coefFor (0.5f * decK, fs);
-                                v.dEnv2 *= coefFor (0.01f, fs);
+                                v.dPitch *= cTomPitch;
+                                v.dEnv *= cTom;
+                                v.dEnv2 *= cTomClick;
                                 break;
                             }
                         }
@@ -639,6 +646,7 @@ namespace ondefx
                     {
                         synth.edit.getUndoManager().beginNewTransaction (juce::String::fromUTF8 ("Préréglage « ") + presetBox.getText() + juce::String::fromUTF8 (" »"));
                         synth.applyPreset (*pr);
+                        if (auto* t = dynamic_cast<te::AudioTrack*> (synth.getOwnerTrack())) chains::rebuildMacros (*t);   // commandes rapides du nouveau moteur
                         rebuild();
                     }
                 };

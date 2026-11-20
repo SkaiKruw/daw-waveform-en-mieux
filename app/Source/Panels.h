@@ -142,7 +142,7 @@ private:
     juce::TextButton instrumentBtn;
     juce::ComboBox chainBox;                         // chaîne d'effets prête
     juce::OwnedArray<juce::Component> quickKnobs;    // commandes rapides (macros)
-    int quickY = -1;
+    int quickY = -1, ticks = 0;
     juce::Slider volume, pan;
     juce::Label volLabel, panLabel;
     juce::OwnedArray<juce::TextButton> slots;

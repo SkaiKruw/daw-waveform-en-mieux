@@ -148,6 +148,7 @@ namespace ondefx
         // Courbe statique (sortie en fonction de l'entrée, dB) pour l'affichage.
         float transferDb (float inDb) const;
         float gainComputer (float inDb, float knee) const;          // réduction voulue (dB, ≥ 0)
+        static float gainComputer (float inDb, float knee, float threshold, float ratio) noexcept;
         std::atomic<float> gainReductionDb { 0 }, inputDb { -100 }, outputDb { -100 };
         static constexpr double lookaheadMs = 5.0;
         static constexpr const char* styleNames[3] = { "Propre", "Opto", "Vintage" };

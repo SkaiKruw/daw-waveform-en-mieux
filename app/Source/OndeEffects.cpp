@@ -441,7 +441,11 @@ namespace ondefx
 
     float CompPlugin::gainComputer (float x, float k) const
     {
-        const float t = value ("threshold"), r = value ("ratio");
+        return gainComputer (x, k, value ("threshold"), value ("ratio"));
+    }
+
+    float CompPlugin::gainComputer (float x, float k, float t, float r) noexcept
+    {
         if (2.0f * (x - t) < -k) return 0.0f;
         if (k > 0.0f && 2.0f * std::abs (x - t) <= k) return -(1.0f / r - 1.0f) * (x - t + k / 2.0f) * (x - t + k / 2.0f) / (2.0f * k);
         return (x - t) * (1.0f - 1.0f / r);
@@ -465,7 +469,7 @@ namespace ondefx
         const bool listen = value ("listen") > 0.5f, lookahead = value ("lookahead") > 0.5f;
         float k = value ("knee");
         if (style == 2) k = std::max (k, 12.0f);                    // vintage : genou large
-        const float link = value ("link") / 100.0f;
+        const float link = value ("link") / 100.0f, threshold = value ("threshold"), ratio = value ("ratio");   // lus une fois par bloc
         const float makeup = dbToGain (value ("makeup")), wet = value ("mix") / 100.0f;
         const float fs = (float) rate, relMs = value ("release");
         const float att = std::exp (-1.0f / (0.001f * value ("attack") * fs));
@@ -502,9 +506,12 @@ namespace ondefx
             if (chans == 1) lvl[1] = lvl[0];
             const float linked = std::max (lvl[0], lvl[1]);
             float gr[2] {};
+            // Liaison totale (cas courant) : un seul calcul de gain pour les deux canaux.
+            const bool fullyLinked = link >= 0.999f || chans == 1;
+            const float linkedTarget = fullyLinked ? gainComputer (gainToDb (linked), k, threshold, ratio) : 0.0f;
             for (int c = 0; c < chans; ++c)
             {
-                const float target = gainComputer (gainToDb (link * linked + (1.0f - link) * lvl[c]), k);
+                const float target = fullyLinked ? linkedTarget : gainComputer (gainToDb (link * linked + (1.0f - link) * lvl[c]), k, threshold, ratio);
                 if (autoRel)
                 {
                     // Double enveloppe : un transitoire isolé se relâche vite (40 ms), une compression

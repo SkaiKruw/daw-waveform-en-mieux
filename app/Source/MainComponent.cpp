@@ -2,6 +2,7 @@
 #include "ParamControls.h"
 #include "DemoContent.h"
 #include "OndeSynth.h"
+#include "Chains.h"
 
 using State = onde::PluginSandbox::State;
 
@@ -697,6 +698,37 @@ void MainComponent::registerActions()
     ctx.addAction ("palette.open", U ("Rechercher une commande…"), "Aide", KP ('k', ctrl, 0), [this] { openPalette(); });
     ctx.addAction ("help.shortcuts", "Raccourcis clavier", "Aide", KP (KP::F1Key), [this] { showShortcuts(); });
     ctx.addAction ("help.about", U ("À propos d'Onde"), "Aide", {}, [] { AboutPanel::show(); })->separatorBefore = true;
+
+    // Palette (Ctrl+K) : chaque son de la bibliothèque, chaque chaîne prête et chaque type de nouvelle piste se trouvent
+    // en tapant leur nom (« piano », « voix pop », « batteur »…). Catégories hors des menus : palette seulement.
+    for (auto& preset : ondefx::SynthPlugin::presets())
+    {
+        const auto name = juce::String::fromUTF8 (preset.name);
+        ctx.addAction ("sound." + name, U ("Son : ") + name + U (" (") + juce::String::fromUTF8 (preset.category) + U (") — sur la piste sélectionnée"), "Son", {}, [this, &preset]
+        {
+            if (edit == nullptr) return;
+            if (auto* t = LibraryPanel::applyToTrack (ctx, ctx.getSelectedTrack(), preset))
+                setStatus (U ("Son « ") + juce::String::fromUTF8 (preset.name) + U (" » sur « ") + t->getName() + U (" »"));
+        });
+    }
+    for (auto& chain : chains::all())
+    {
+        const auto name = juce::String::fromUTF8 (chain.name);
+        ctx.addAction ("chain." + name, U ("Chaîne : ") + name + U (" — ") + juce::String::fromUTF8 (chain.description), U ("Chaîne"), {}, [this, &chain]
+        {
+            auto* t = ctx.getSelectedTrack();
+            if (edit == nullptr || t == nullptr) { setStatus (U ("Sélectionnez d'abord une piste")); return; }
+            edit->getUndoManager().beginNewTransaction (U ("Chaîne « ") + juce::String::fromUTF8 (chain.name) + U (" »"));
+            chains::apply (*t, &chain);
+            ctx.changed();
+            setStatus (U ("Chaîne « ") + juce::String::fromUTF8 (chain.name) + U (" » sur « ") + t->getName() + U (" »"));
+        });
+    }
+    const std::pair<NewTrackPanel::Kind, const char*> kinds[] = { { NewTrackPanel::instrument, "Nouvelle piste : instrument (piano, synthés…)" },
+        { NewTrackPanel::voice, "Nouvelle piste : voix ou micro" }, { NewTrackPanel::guitar, "Nouvelle piste : guitare ou basse" },
+        { NewTrackPanel::audio, "Nouvelle piste : audio vide" } };
+    for (auto& [kind, label] : kinds)
+        ctx.addAction ("track.new." + juce::String ((int) kind), U (label), "Piste", {}, [this, kind = kind] { NewTrackPanel::create (ctx, kind); });
 
     // Une action par effet / instrument, pour les trouver en tapant leur nom (et dans le menu Studio).
     auto addPluginAction = [this] (const PluginEntry& e)

@@ -811,6 +811,55 @@ private:
         }
         m->getContext().findAction ("transport.play")->perform();
         pump (300);
+
+        // Coût de chaque effet et de chaque moteur d'Onde Synth : 10 s de stéréo à 48 kHz, blocs de 512,
+        // en % d'un cœur (temps de calcul / durée du son).
+        std::printf ("\n  Coût des effets et instruments Onde (%% d'un cœur, 48 kHz) :\n");
+        auto bench = [&] (const char* label, const char* type, std::function<void (te::Plugin&)> setup, bool synth)
+        {
+            auto p = edit.getPluginCache().createNewPlugin (type, {});
+            if (p == nullptr) return;
+            if (setup) setup (*p);
+            p->initialise ({ te::TimePosition(), 48000.0, 512 });
+            juce::AudioBuffer<float> buf (2, 512);
+            te::MidiMessageArray midi;
+            juce::Random rnd (1);
+            const int blocks = 48000 * 10 / 512;
+            const double t0 = juce::Time::getMillisecondCounterHiRes();
+            for (int b = 0; b < blocks; ++b)
+            {
+                for (int c = 0; c < 2; ++c) for (int i = 0; i < 512; ++i) buf.setSample (c, i, synth ? 0.0f : 0.3f * std::sin (0.05f * (b * 512 + i)) + 0.05f * (rnd.nextFloat() - 0.5f));
+                midi.clear();
+                if (synth && b % 94 == 0)             // un accord de 8 notes par seconde, tenu
+                    for (int note : { 36, 48, 55, 60, 64, 67, 71, 74 }) midi.addMidiMessage (juce::MidiMessage::noteOn (1, note, (juce::uint8) 100), 0.0, te::MPESourceID {});
+                if (synth && b % 94 == 80)
+                    for (int note : { 36, 48, 55, 60, 64, 67, 71, 74 }) midi.addMidiMessage (juce::MidiMessage::noteOff (1, note), 0.0, te::MPESourceID {});
+                te::PluginRenderContext rc (&buf, 0, 512, &midi, 0.0, {}, true, false, false, false);
+                p->applyToBuffer (rc);
+            }
+            const double ms = juce::Time::getMillisecondCounterHiRes() - t0;
+            std::printf ("    %-34s %5.2f %%\n", label, ms / 100.0);   // 10 s = 10000 ms -> pourcentage
+            std::fflush (stdout);
+        };
+        bench ("Onde EQ (7 bandes, 2 dynamiques)", ondefx::EqPlugin::xmlTypeName, [] (te::Plugin& p)
+        {
+            auto& eq = dynamic_cast<ondefx::EqPlugin&> (p);
+            for (int b = 1; b < 6; ++b) eq.setStored (ondefx::EqPlugin::bandId (b, "gain"), 3.0f);
+            eq.setStored (ondefx::EqPlugin::bandId (2, "dyn"), 1.0f); eq.setStored (ondefx::EqPlugin::bandId (4, "dyn"), 1.0f);
+            eq.setStored (ondefx::EqPlugin::bandId (0, "on"), 1.0f); eq.setStored (ondefx::EqPlugin::bandId (0, "slope"), 2.0f);
+        }, false);
+        bench ("Onde Comp (RMS, anticipation)", ondefx::CompPlugin::xmlTypeName, [] (te::Plugin& p)
+        { auto& c = dynamic_cast<ondefx::CompPlugin&> (p); c.setStored ("detect", 1); c.setStored ("lookahead", 1); c.setStored ("autorel", 1); }, false);
+        bench ("Onde Limiteur (crête vraie, sonie)", ondefx::LimiterPlugin::xmlTypeName, nullptr, false);
+        bench ("Onde Saturation (x2)", ondefx::SaturationPlugin::xmlTypeName, nullptr, false);
+        bench (U ("Onde Écho").toRawUTF8(), ondefx::EchoPlugin::xmlTypeName, nullptr, false);
+        bench ("Onde Espace", ondefx::SpacePlugin::xmlTypeName, nullptr, false);
+        for (const char* preset : { "Piano de concert", "Piano électrique", "Nappe aérienne", "Basse synthé", "Batterie acoustique" })
+        {
+            const juce::String label = U ("Onde Synth : ") + U (preset) + U (" (8 notes)");
+            bench (label.toRawUTF8(), ondefx::SynthPlugin::xmlTypeName, [preset] (te::Plugin& p)
+            { dynamic_cast<ondefx::SynthPlugin&> (p).applyPreset (*ondefx::SynthPlugin::findPreset (U (preset))); }, true);
+        }
         return 0;
     }
 
@@ -1039,7 +1088,7 @@ private:
         ctx.findAction ("track.addAudio")->perform();
         check (te::getAudioTracks (edit).size() == tracks.size() + 2, U ("« Ajouter une piste » fonctionne (instrument + audio)"));
         auto* inst = te::getAudioTracks (edit)[tracks.size()];
-        check (ctx.getInstrument (*inst) != nullptr, U ("la piste instrument a un synthé 4OSC"));
+        check (ctx.getInstrument (*inst) != nullptr, U ("la piste instrument a un instrument (Onde Synth)"));
         ctx.selectTrack (te::getAudioTracks (edit).getLast());
         ctx.findAction ("track.delete")->perform();
         check (te::getAudioTracks (edit).size() == tracks.size() + 1, U ("« Supprimer la piste » fonctionne"));
@@ -2358,6 +2407,9 @@ private:
                 chains::apply (*t, nullptr);
             }
 
+            // Palette (Ctrl+K) : sons, chaînes et types de piste se trouvent par leur nom.
+            check (c4.findAction (U ("sound.Piano de concert")) != nullptr && c4.findAction (U ("chain.Voix pop")) != nullptr && c4.findAction ("track.new.2") != nullptr,
+                   U ("palette : « Son : Piano de concert », « Chaîne : Voix pop » et « Nouvelle piste : voix » s'y trouvent"));
             // Batteur : signatures des styles, complexité, intensité, remplissages, variations stables.
             {
                 auto onBeat = [] (const std::vector<drummer::Hit>& hits, int note, int bars)
