@@ -189,6 +189,7 @@ namespace ondefx
     {
         for (auto& v : voices) { v->active = false; v->held = false; }
         sustainDown = false; pitchBend = 0; modWheel = 0;
+        ccVolume = ccExpression = ccGain = 1.0f; ccPan = pressure = 0.0f;
     }
 
     //==============================================================================
@@ -287,7 +288,7 @@ namespace ondefx
         const float bright = value ("bright"), hard = value ("hard"), drive = value ("drive"), velsens = value ("velsens");
         const int kit = juce::roundToInt (value ("kit"));
         const float dtune = std::pow (2.0f, value ("dtune") / 12.0f), ddecay = value ("ddecay");
-        const float vibDepth = value ("vibrato") * 25.0f + modWheel * 40.0f;      // centièmes de demi-ton
+        const float vibDepth = value ("vibrato") * 25.0f + modWheel * 40.0f + pressure * 30.0f;   // centièmes de demi-ton (aftertouch : vibrato)
         const float bend = std::pow (2.0f, pitchBend * 2.0f / 12.0f);
         const float tineCoef = coefFor (0.25f, fs), damperCoef = coefFor (0.12f, fs), hammerCoef = coefFor (0.006f, fs);
         // Batterie : décroissances calculées une fois par bloc (et non à chaque échantillon).
@@ -514,10 +515,14 @@ namespace ondefx
         // Sortie : marge (plusieurs voix s'additionnent), saturation douce qui ne dépasse jamais -1 dBFS, volume avant.
         const float gain = std::pow (10.0f, value ("volume") / 20.0f) * 0.45f;
         const float k = 1.0f + drive * 4.0f, makeup = 0.89f / std::sqrt (k);
+        // Volume et expression MIDI (lissés : pas de clic), puis balance du panoramique MIDI.
+        const float ccTarget = ccVolume * ccExpression, ccSmooth = 1.0f - std::exp (-1.0f / (0.005f * (float) fs));
+        const float panL = juce::jmin (1.0f, 1.0f - ccPan), panR = juce::jmin (1.0f, 1.0f + ccPan);
         for (int i = start; i < start + n; ++i)
         {
-            L[i] = std::tanh (L[i] * gain * k) * makeup;
-            R[i] = std::tanh (R[i] * gain * k) * makeup;
+            ccGain += ccSmooth * (ccTarget - ccGain);
+            L[i] = std::tanh (L[i] * gain * k) * makeup * ccGain * panL;
+            R[i] = std::tanh (R[i] * gain * k) * makeup * ccGain * panR;
         }
     }
 
@@ -553,6 +558,10 @@ namespace ondefx
                 }
                 else if (msg.isPitchWheel())         pitchBend = (msg.getPitchWheelValue() - 8192) / 8192.0f;
                 else if (msg.isControllerOfType (1)) modWheel = msg.getControllerValue() / 127.0f;
+                else if (msg.isControllerOfType (7)) ccVolume = msg.getControllerValue() / 127.0f;
+                else if (msg.isControllerOfType (11)) ccExpression = msg.getControllerValue() / 127.0f;
+                else if (msg.isControllerOfType (10)) ccPan = juce::jlimit (-1.0f, 1.0f, (msg.getControllerValue() - 64) / 63.0f);
+                else if (msg.isChannelPressure())    pressure = msg.getChannelPressureValue() / 127.0f;
                 else if (msg.isAllNotesOff() || msg.isAllSoundOff()) for (auto& v : voices) v->active = false;
             }
         }

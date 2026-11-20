@@ -31,6 +31,12 @@ PianoRollView::PianoRollView (EditContext& c) : ctx (c)
     quantBtn.setTooltip (U ("Quantifier les notes sélectionnées (ou toutes) sur la grille  Q"));
     quantBtn.onClick = [this] { quantise(); };
     fitBtn.onClick = [this] { framedClip = {}; frameNotes(); repaint(); };
+    styleButton (laneBtn);
+    laneBtn.setWantsKeyboardFocus (false);
+    laneBtn.setTooltip (U ("Couloir affiché : vélocité, modulation, expression, volume, pitch bend…"));
+    laneBtn.onClick = [this] { showLaneMenu(); };
+    addAndMakeVisible (laneBtn);
+    setLane (-1);
     ctx.addChangeListener (this);
     startTimerHz (20);
 }
@@ -149,6 +155,7 @@ void PianoRollView::resized()
     rootBox.setBounds (t.removeFromLeft (64)); t.removeFromLeft (4);
     scaleBox.setBounds (t.removeFromLeft (140)); t.removeFromLeft (12);
     fitBtn.setBounds (t.removeFromLeft (80));
+    laneBtn.setBounds (4, getHeight() - velH + 6, keysW - 6, 20);
 }
 
 void PianoRollView::paint (juce::Graphics& g)
@@ -166,7 +173,7 @@ void PianoRollView::paint (juce::Graphics& g)
     g.setColour (theme::text); g.setFont (theme::ui (13.0f, true));
     g.drawText (mc ? mc->getName() : U ("Éditeur de notes"), 10, 0, 160, toolbarH, juce::Justification::centredLeft, true);
     g.setColour (theme::muted); g.setFont (theme::ui (11.5f));
-    g.drawText (mc ? (mc->getTrack()->getName() + U ("  ·  ") + juce::String (mc->getSequence().getNumNotes()) + " notes" + (selected.isEmpty() ? juce::String() : U ("  ·  ") + juce::String (selected.size()) + U (" sél.")))
+    g.drawText (mc ? (mc->getTrack()->getName() + U ("  ·  ") + juce::String (mc->getSequence().getNumNotes()) + (mc->getSequence().getNumNotes() > 1 ? " notes" : " note") + (selected.isEmpty() ? juce::String() : U ("  ·  ") + juce::String (selected.size()) + U (" sél.")))
                    : U ("Aucun conteneur MIDI sélectionné"), 150, 0, 150, toolbarH, juce::Justification::centredLeft, true);
 
     auto grid = gridArea();
@@ -252,14 +259,59 @@ void PianoRollView::paint (juce::Graphics& g)
     }
     g.setColour (theme::line); g.drawHorizontalLine (toolbarH + rulerH - 1, 0.0f, (float) getWidth());
 
-    // Vélocité.
+    // Couloir du bas : vélocité ou contrôleur.
     auto vel = velArea();
     g.setColour (juce::Colour (0xff202225)); g.fillRect (getLocalBounds().removeFromBottom (velH));
     g.setColour (theme::line); g.drawHorizontalLine (getHeight() - velH, 0.0f, (float) getWidth());
-    g.setColour (theme::muted); g.setFont (theme::ui (11.0f, true));
-    g.drawText (U ("Vélocité"), 6, vel.getY() + 2, keysW - 10, 14, juce::Justification::left);
     g.setColour (theme::lineSoft); g.drawHorizontalLine (vel.getY() + vel.getHeight() / 2, (float) vel.getX(), (float) vel.getRight());
-    if (mc != nullptr)
+    if (mc != nullptr && laneType >= 0)
+    {
+        // Contrôleur : valeur tenue jusqu'à l'évènement suivant (escalier), points éditables, ligne en cours.
+        const auto colour = juce::Colour (0xff2de2c6);
+        juce::Array<te::MidiControllerEvent*> events;
+        for (auto* ev : mc->getSequence().getControllerEvents()) if (ev->getType() == laneType) events.add (ev);
+        const bool bipolar = laneType == te::MidiControllerEvent::pitchWheelType || laneType == 10;
+        g.setColour (theme::dim); g.setFont (theme::ui (10.0f));
+        g.drawText (bipolar ? "+" : "127", vel.getX() + 2, vel.getY(), 30, 12, juce::Justification::left);
+        g.drawText (bipolar ? "-" : "0", vel.getX() + 2, vel.getBottom() - 12, 30, 12, juce::Justification::left);
+        if (events.isEmpty())
+        {
+            g.setColour (theme::muted); g.setFont (theme::ui (11.5f));
+            g.drawText (U ("Dessinez la courbe à la souris · Maj + glisser : ligne droite · clic droit : effacer un point"),
+                        vel.reduced (40, 0), juce::Justification::centred, true);
+        }
+        else
+        {
+            juce::Path step;
+            float prevY = valueToY (fromRaw (events.getFirst()->getControllerValue()));
+            step.startNewSubPath ((float) vel.getX(), prevY);
+            for (auto* ev : events)
+            {
+                const float x = juce::jlimit ((float) vel.getX(), (float) vel.getRight(), beatToX (ev->getBeatPosition().inBeats()));
+                const float y = valueToY (fromRaw (ev->getControllerValue()));
+                step.lineTo (x, prevY); step.lineTo (x, y);
+                prevY = y;
+            }
+            step.lineTo ((float) vel.getRight(), prevY);
+            juce::Path fill (step);
+            const float base = bipolar ? (float) (vel.getY() + vel.getHeight() / 2) : (float) vel.getBottom();
+            fill.lineTo ((float) vel.getRight(), base); fill.lineTo ((float) vel.getX(), base); fill.closeSubPath();
+            g.setColour (colour.withAlpha (0.15f)); g.fillPath (fill);
+            g.setColour (colour); g.strokePath (step, juce::PathStrokeType (1.6f));
+            for (auto* ev : events)
+            {
+                const float x = beatToX (ev->getBeatPosition().inBeats());
+                if (x < vel.getX() || x > vel.getRight()) continue;
+                g.fillEllipse (x - 2.5f, valueToY (fromRaw (ev->getControllerValue())) - 2.5f, 5.0f, 5.0f);
+            }
+        }
+        if (mode == controllerLine)
+        {
+            g.setColour (juce::Colours::white.withAlpha (0.8f));
+            g.drawLine ({ lineStart, lineEnd }, 1.5f);
+        }
+    }
+    else if (mc != nullptr)
     {
         for (auto* n : mc->getSequence().getNotes())
         {
@@ -298,6 +350,13 @@ void PianoRollView::mouseDown (const juce::MouseEvent& e)
     auto* um = &ctx.edit->getUndoManager();
     auto& seq = mc->getSequence();
 
+    if (e.y > getHeight() - velH && e.x > keysW && laneType >= 0)
+    {
+        um->beginNewTransaction (laneName (laneType));
+        if (e.mods.isPopupMenu() || ctx.tool == Tool::erase) { mode = controllerErase; mouseDrag (e); return; }
+        if (e.mods.isShiftDown()) { mode = controllerLine; lineStart = lineEnd = e.position; repaint(); return; }
+        mode = controller; lastDrawBeat = -1.0; mouseDrag (e); return;
+    }
     if (e.y > getHeight() - velH && e.x > keysW) { um->beginNewTransaction (U ("Vélocité")); mode = velocity; mouseDrag (e); return; }
     if (e.y > toolbarH && e.y < toolbarH + rulerH && e.x > keysW)
     {
@@ -365,6 +424,28 @@ void PianoRollView::mouseDrag (const juce::MouseEvent& e)
     if (mc == nullptr) return;
     auto* um = &ctx.edit->getUndoManager();
 
+    if (mode == controller)
+    {
+        // Dessin libre : une valeur par pas, les pas sautés pendant un geste rapide sont comblés par une rampe.
+        const double step = controllerStep();
+        const double b = std::floor (juce::jmax (0.0, xToBeat ((float) e.x)) / step) * step;
+        const float v = yToValue ((float) e.y);
+        if (lastDrawBeat < 0.0) drawControllerRamp (b, b, v, v);
+        else if (std::abs (b - lastDrawBeat) > 1.0e-9) drawControllerRamp (lastDrawBeat, b, lastDrawValue, v);
+        lastDrawBeat = b; lastDrawValue = v;
+        repaint (velArea());
+        return;
+    }
+    if (mode == controllerLine) { lineEnd = e.position; repaint (velArea()); return; }
+    if (mode == controllerErase)
+    {
+        juce::Array<te::MidiControllerEvent*> doomed;
+        for (auto* ev : mc->getSequence().getControllerEvents())
+            if (ev->getType() == laneType && std::abs (beatToX (ev->getBeatPosition().inBeats()) - (float) e.x) < 6.0f) doomed.add (ev);
+        for (auto* ev : doomed) mc->getSequence().removeControllerEvent (*ev, um);
+        repaint (velArea());
+        return;
+    }
     if (mode == velocity)
     {
         auto vel = velArea();
@@ -425,6 +506,15 @@ void PianoRollView::mouseDrag (const juce::MouseEvent& e)
 
 void PianoRollView::mouseUp (const juce::MouseEvent&)
 {
+    if (mode == controllerLine && lineStart.getDistanceFrom (lineEnd) > 2.0f)
+    {
+        // Ligne droite (Maj + glisser) : rampe régulière entre les deux extrémités.
+        auto a = lineStart, b = lineEnd;
+        if (b.x < a.x) std::swap (a, b);
+        const double step = controllerStep();
+        drawControllerRamp (std::floor (juce::jmax (0.0, xToBeat (a.x)) / step) * step, std::floor (juce::jmax (0.0, xToBeat (b.x)) / step) * step,
+                            yToValue (a.y), yToValue (b.y));
+    }
     mode = none;
     rubberRect = {};
     lastAuditionPitch = -1;
@@ -512,4 +602,125 @@ void PianoRollView::timerCallback()
         return;
     }
     repaintCursorStrip (*this, lastCursorX, cursorX(), 0, getHeight());
+}
+
+//==============================================================================
+// Couloirs de contrôleurs.
+juce::String PianoRollView::laneName (int type)
+{
+    switch (type)
+    {
+        case -1: return U ("Vélocité");
+        case 1:  return "Modulation";
+        case 7:  return "Volume";
+        case 10: return U ("Panoramique");
+        case 11: return "Expression";
+        case 64: return "Sustain";
+        case te::MidiControllerEvent::pitchWheelType:      return "Pitch bend";
+        case te::MidiControllerEvent::channelPressureType: return "Aftertouch";
+        default: return "CC " + juce::String (type);
+    }
+}
+
+void PianoRollView::setLane (int type)
+{
+    laneType = type;
+    laneBtn.setButtonText (laneName (type) + U (" ▾"));
+    mode = none;
+    repaint();
+}
+
+float PianoRollView::valueToY (float norm) const
+{
+    auto vel = velArea();
+    return (float) vel.getBottom() - 2.0f - juce::jlimit (0.0f, 1.0f, norm) * (float) (vel.getHeight() - 6);
+}
+
+float PianoRollView::yToValue (float y) const
+{
+    auto vel = velArea();
+    return juce::jlimit (0.0f, 1.0f, ((float) vel.getBottom() - 2.0f - y) / (float) (vel.getHeight() - 6));
+}
+
+int PianoRollView::toRaw (float norm) const
+{
+    // Valeurs du moteur sur 14 bits : CC = valeur 7 bits << 7, pitch bend 0..16383 (centre 8192, aimanté).
+    if (laneType == te::MidiControllerEvent::pitchWheelType)
+        return std::abs (norm - 0.5f) < 0.025f ? 8192 : juce::jlimit (0, 16383, juce::roundToInt (norm * 16383.0f));
+    if (laneType == 64) return norm >= 0.5f ? 127 << 7 : 0;                  // sustain : appuyé ou relâché
+    if (laneType == 10 && std::abs (norm - 0.5f) < 0.025f) return 64 << 7;  // panoramique : centre aimanté
+    return juce::jlimit (0, 127, juce::roundToInt (norm * 127.0f)) << 7;
+}
+
+float PianoRollView::fromRaw (int raw) const
+{
+    if (laneType == te::MidiControllerEvent::pitchWheelType) return raw / 16383.0f;
+    return (raw >> 7) / 127.0f;
+}
+
+void PianoRollView::drawControllerRamp (double fromBeat, double toBeat, float fromValue, float toValue)
+{
+    auto* mc = ctx.getSelectedMidiClip();
+    if (mc == nullptr || laneType < 0) return;
+    auto* um = &ctx.edit->getUndoManager();
+    auto& seq = mc->getSequence();
+    if (toBeat < fromBeat) { std::swap (fromBeat, toBeat); std::swap (fromValue, toValue); }
+    const double step = controllerStep();
+    // Les points déjà présents sur ce passage sont remplacés.
+    juce::Array<te::MidiControllerEvent*> doomed;
+    for (auto* ev : seq.getControllerEvents())
+        if (ev->getType() == laneType && ev->getBeatPosition().inBeats() >= fromBeat - 1.0e-9 && ev->getBeatPosition().inBeats() < toBeat + step * 0.5)
+            doomed.add (ev);
+    for (auto* ev : doomed) seq.removeControllerEvent (*ev, um);
+    const int steps = juce::jmax (0, juce::roundToInt ((toBeat - fromBeat) / step));
+    int lastRaw = -1;
+    for (int i = 0; i <= steps; ++i)
+    {
+        const float t = steps > 0 ? (float) i / (float) steps : 1.0f;
+        const int raw = toRaw (fromValue + (toValue - fromValue) * t);
+        if (raw == lastRaw && i != steps) continue;                           // valeurs identiques : un seul point
+        seq.addControllerEvent (te::BeatPosition::fromBeats (fromBeat + i * step), laneType, raw, um);
+        lastRaw = raw;
+    }
+    repaint();
+}
+
+void PianoRollView::showLaneMenu()
+{
+    auto* mc = ctx.getSelectedMidiClip();
+    auto used = [mc] (int type)
+    {
+        if (mc != nullptr) for (auto* ev : mc->getSequence().getControllerEvents()) if (ev->getType() == type) return true;
+        return false;
+    };
+    auto label = [&] (int type) { return (used (type) ? U ("● ") : juce::String()) + laneName (type); };
+    juce::PopupMenu m, more;
+    const int main[] = { -1, 1, 11, 7, 10, 64, te::MidiControllerEvent::pitchWheelType, te::MidiControllerEvent::channelPressureType };
+    for (int type : main) m.addItem (type == -1 ? 1 : 2 + type, label (type), true, laneType == type);
+    for (int bank = 0; bank < 4; ++bank)
+    {
+        juce::PopupMenu sub;
+        for (int cc = bank * 32; cc < bank * 32 + 32; ++cc) sub.addItem (2 + cc, label (cc), true, laneType == cc);
+        more.addSubMenu ("CC " + juce::String (bank * 32) + "-" + juce::String (bank * 32 + 31), sub);
+    }
+    m.addSubMenu (U ("Autres contrôleurs"), more);
+    if (laneType >= 0 && mc != nullptr) { m.addSeparator(); m.addItem (99999, U ("Effacer « ") + laneName (laneType) + U (" » dans ce conteneur")); }
+    m.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (&laneBtn), [this] (int r)
+    {
+        if (r == 1) { setLane (-1); return; }
+        if (r == 99999)
+        {
+            if (auto* clip = ctx.getSelectedMidiClip())
+            {
+                auto* um = &ctx.edit->getUndoManager();
+                um->beginNewTransaction (U ("Effacer « ") + laneName (laneType) + U (" »"));
+                juce::Array<te::MidiControllerEvent*> doomed;
+                for (auto* ev : clip->getSequence().getControllerEvents()) if (ev->getType() == laneType) doomed.add (ev);
+                for (auto* ev : doomed) clip->getSequence().removeControllerEvent (*ev, um);
+                repaint();
+            }
+            return;
+        }
+        if (r >= 2) setLane (r - 2);
+    });
 }

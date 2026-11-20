@@ -2504,6 +2504,81 @@ private:
                 for (auto* tr : { drumTrack, voiceTrack, instTrack }) if (tr != nullptr) ed.deleteTrack (tr);
                 c4.changed();
             }
+
+            // Couloirs de contrôleurs MIDI dans l'éditeur de notes : expression et pitch bend dessinés, entendus au rendu.
+            {
+                auto* ccTrack = LibraryPanel::applyToTrack (c4, nullptr, *ondefx::SynthPlugin::findPreset ("Orgue doux"));
+                ondefx::SynthPlugin* organ = nullptr;
+                for (auto* p : ccTrack->pluginList) if (auto* sp = dynamic_cast<ondefx::SynthPlugin*> (p)) organ = sp;
+                for (auto* id : { "vibrato", "sub", "mix2" }) organ->setStored (id, 0.0f);
+                auto clip = ccTrack->insertMIDIClip ("cc", { te::TimePosition(), te::TimePosition::fromSeconds (4.0) }, nullptr);
+                clip->getSequence().addNote (69, te::BeatPosition(), te::BeatDuration::fromBeats (8.0), 100, 0, nullptr);
+                c4.selectTrack (ccTrack);
+                c4.selectClip (clip.get());
+                mc->showView (2);
+                pump (400);
+                std::function<PianoRollView* (juce::Component&)> findRoll = [&] (juce::Component& comp) -> PianoRollView*
+                {
+                    if (auto* r = dynamic_cast<PianoRollView*> (&comp)) return r;
+                    for (auto* ch : comp.getChildren()) if (auto* r = findRoll (*ch)) return r;
+                    return nullptr;
+                };
+                auto* roll = findRoll (*mc);
+                auto countType = [&] (int type) { int k = 0; for (auto* ev : clip->getSequence().getControllerEvents()) if (ev->getType() == type) ++k; return k; };
+                auto renderCc = [&] (const char* name) { double r = 0; const auto f = dir.getChildFile (juce::String (name) + ".wav"); renderEdit (ed, f, { ccTrack }); return readAll (f, r); };
+                double quietDb = 0, loudDb = 0, bentHz = 0;
+                int expressionEvents = 0, afterUndo = -1, kept = -1;
+                if (roll != nullptr)
+                {
+                    auto& um = ed.getUndoManager();
+                    um.beginNewTransaction ("Expression");
+                    roll->setLane (11);
+                    roll->drawControllerRamp (0.0, 3.9375, 0.0f, 0.0f);     // expression à 0 pendant 2 s…
+                    roll->drawControllerRamp (4.0, 7.9375, 1.0f, 1.0f);     // …puis au maximum
+                    expressionEvents = countType (11);
+                    snapshot (*roll, dir.getChildFile ("24-couloir-expression.png"));
+                    const auto expr = renderCc ("cc-expression");
+                    quietDb = juce::Decibels::gainToDecibels (expr.getRMSLevel (0, 9600, 48000), -120.0f);
+                    loudDb = juce::Decibels::gainToDecibels (expr.getRMSLevel (0, 2 * 48000 + 9600, 48000), -120.0f);
+                    // Pitch bend au maximum (+2 demi-tons) : La 440 → Si 493,9 Hz.
+                    um.beginNewTransaction ("Expression neutre");
+                    roll->drawControllerRamp (0.0, 7.9375, 1.0f, 1.0f);
+                    um.beginNewTransaction ("Pitch bend");
+                    roll->setLane (te::MidiControllerEvent::pitchWheelType);
+                    roll->drawControllerRamp (0.0, 7.9375, 1.0f, 1.0f);
+                    const auto bent = renderCc ("cc-pitch-bend");
+                    double first = -1, last = -1; int zc = 0;
+                    for (int i = 9601; i < 57600; ++i)
+                    {
+                        const float a = bent.getSample (0, i - 1), c = bent.getSample (0, i);
+                        if (a < 0 && c >= 0) { const double tz = i - 1 + a / (a - c); if (first < 0) first = tz; last = tz; ++zc; }
+                    }
+                    bentHz = zc > 1 ? (zc - 1) * 48000.0 / (last - first) : 0.0;
+                    snapshot (*roll, dir.getChildFile ("25-couloir-pitch-bend.png"));
+                    um.undo();
+                    pump (200);
+                    afterUndo = countType (te::MidiControllerEvent::pitchWheelType);
+                    // Enregistré avec le projet.
+                    const auto savedCc = dir.getChildFile ("controleurs.onde");
+                    if (mc->saveProjectTo (savedCc))
+                        if (auto reopened = MainComponent::loadProject (*engine, savedCc))
+                        {
+                            for (auto* rt : te::getAudioTracks (*reopened))
+                                for (auto* c : rt->getClips())
+                                    if (auto* rmc = dynamic_cast<te::MidiClip*> (c); rmc != nullptr && rmc->getName() == "cc")
+                                    { kept = 0; for (auto* ev : rmc->getSequence().getControllerEvents()) if (ev->getType() == 11) ++kept; }
+                            EditContext::destroyEdit (reopened);
+                        }
+                    roll->setLane (-1);
+                }
+                check (roll != nullptr && expressionEvents >= 2 && quietDb < -60.0 && loudDb > -30.0 && std::abs (bentHz - 493.88) < 1.5 && afterUndo == 0 && kept == countType (11),
+                       U ("couloirs MIDI : expression dessinée (") + juce::String (expressionEvents) + U (" points) → ") + juce::String (quietDb, 0) + U (" dB puis ")
+                       + juce::String (loudDb, 1) + U (" dB ; pitch bend au maximum → ") + juce::String (bentHz, 2) + U (" Hz (attendu 493,88) ; annuler retire le pitch bend ; ")
+                       + juce::String (kept) + U (" points d'expression retrouvés après réouverture"));
+                mc->showView (0);
+                ed.deleteTrack (ccTrack);
+                c4.changed();
+            }
         }
 
         std::printf ("\n%s\n", failures == 0 ? "INTERFACE OK — toutes les vérifications passent." : "DES VÉRIFICATIONS ÉCHOUENT");

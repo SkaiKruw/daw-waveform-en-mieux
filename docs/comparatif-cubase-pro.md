@@ -31,7 +31,7 @@ que les utilisateurs mettent en avant dans les tests de logiciels et de plugins.
 | Fonction | Onde | Remarque |
 | --- | --- | --- |
 | Éditeur de notes, vélocité, quantification, assistant de gamme | ✅ | |
-| Couloirs de contrôleurs (CC, pitch bend) | ❌ | priorité haute |
+| Couloirs de contrôleurs (CC, pitch bend) | ✅ | vélocité, CC 0-127, pitch bend, aftertouch ; dessin libre et lignes |
 | Éditeur de batterie, piste de batterie, boîte à rythmes | ❌ | |
 | Séquenceur de motifs | ❌ | |
 | Éditeur de partition | ❌ | |
@@ -73,7 +73,7 @@ que les utilisateurs mettent en avant dans les tests de logiciels et de plugins.
 
 1. Effets Onde 2 : EQ dynamique et M/S, compresseur complet, limiteur True Peak et LUFS (en cours).
 2. ~~Modulateurs (LFO, enveloppe)~~, ~~paramètres des VST3 isolés~~, ~~automation de tous les paramètres~~ : fait. Ensuite : « tout est déjà là » (voir la dernière section).
-3. Couloirs de contrôleurs MIDI dans l'éditeur de notes.
+3. ~~Couloirs de contrôleurs MIDI dans l'éditeur de notes~~ : fait.
 4. Geler / rendre une piste sur place ; faders VCA.
 5. Couloirs de prises et comping.
 6. Piste d'arrangement.

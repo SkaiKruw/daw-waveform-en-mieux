@@ -52,6 +52,8 @@ namespace ondefx
         bool sustainDown = false;
         float pitchBend = 0, modWheel = 0;
         double vibPhase = 0;
+        // Contrôleurs MIDI : volume (CC7), expression (CC11), panoramique (CC10), pression (aftertouch).
+        float ccVolume = 1.0f, ccExpression = 1.0f, ccPan = 0.0f, pressure = 0.0f, ccGain = 1.0f;
         uint32_t voiceCounter = 0;
         juce::Random random;
         void noteOn (int note, float velocity);

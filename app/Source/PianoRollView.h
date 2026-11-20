@@ -20,7 +20,14 @@ public:
     void transposeSelected (int semitones);
     int getNumSelected() const { return selected.size(); }
 
-    static constexpr int toolbarH = 34, rulerH = 20, keysW = 70, velH = 90, defaultRowH = 13;
+    static constexpr int toolbarH = 34, rulerH = 20, keysW = 70, velH = 110, defaultRowH = 13;
+
+    // Couloir du bas : vélocité (-1) ou type de contrôleur Tracktion (0-127 = CC, ou pitch bend, pression…).
+    void setLane (int type);
+    int getLane() const { return laneType; }
+    static juce::String laneName (int type);
+    // Dessine une rampe de contrôleur entre deux temps (début inclus), valeurs 0..1 (aussi pour les tests).
+    void drawControllerRamp (double fromBeat, double toBeat, float fromValue, float toValue);
 private:
     void timerCallback() override;
     float cursorX() const;
@@ -51,7 +58,17 @@ private:
     double viewBeat = 0.0, pxPerBeat = 60.0;
     te::EditItemID framedClip;
     juce::Array<te::MidiNote*> selected;
-    enum Mode { none, move, resize, velocity, create, rubber, erase } mode = none;
+    enum Mode { none, move, resize, velocity, create, rubber, erase, controller, controllerLine, controllerErase } mode = none;
+    int laneType = -1;
+    juce::TextButton laneBtn;
+    double lastDrawBeat = -1.0; float lastDrawValue = 0.0f;
+    juce::Point<float> lineStart, lineEnd;
+    void showLaneMenu();
+    float valueToY (float norm) const;
+    float yToValue (float y) const;
+    int toRaw (float norm) const;
+    float fromRaw (int raw) const;
+    double controllerStep() const { return 1.0 / 16.0; }      // une valeur par quadruple croche en dessin libre
     te::MidiNote* dragNote = nullptr;
     juce::Array<double> dragStarts; juce::Array<int> dragPitches; juce::Array<double> dragLens;
     juce::Rectangle<int> rubberRect;
