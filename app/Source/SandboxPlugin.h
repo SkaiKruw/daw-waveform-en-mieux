@@ -46,8 +46,20 @@ public:
 
     juce::CachedValue<juce::String> spec, displayName, savedState;
 
+    // Paramètres du VST3 isolé, exposés comme paramètres Onde (automation, modulation, enregistrés).
+    // Créés sur le fil principal dès que le plugin est prêt ; nombre publié pour les tests.
+    int getNumPluginParameters() const                       { return (int) byIndex.size(); }
+    te::AutomatableParameter* getPluginParameter (int index) const;
+    void buildParameters();                                  // fil principal ; sans effet si déjà fait
+
+    class Parameter;
+
 private:
     void ensureSandbox (double sampleRate, int blockSize);
+    void pollParameters();
+    std::vector<Parameter*> byIndex;                         // index du plugin -> paramètre (nullptr si non automatisable)
+    bool paramsBuilt = false;
+    te::LambdaTimer paramTimer;
     std::unique_ptr<onde::PluginSandbox> sandbox;
     double preparedRate = 0;
     std::vector<onde::MidiEvent> midiScratch;

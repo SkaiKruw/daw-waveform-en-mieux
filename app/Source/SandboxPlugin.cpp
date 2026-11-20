@@ -5,17 +5,112 @@ const char* SandboxPlugin::xmlTypeName = "ondeSandbox";
 
 static const juce::Identifier specID ("spec"), nameID ("displayName"), stateID ("pluginState");
 
+//==============================================================================
+// Un paramètre du VST3 isolé : la valeur (0..1) part vers le processus du plugin à chaque changement,
+// y compris depuis l'automation et les modulateurs (fil audio, sans verrou).
+class SandboxPlugin::Parameter  : public te::AutomatableParameter
+{
+public:
+    Parameter (SandboxPlugin& o, int i, const juce::String& id, const juce::String& name, const onde::PluginSandbox::ParamDesc& d)
+        : te::AutomatableParameter (id, name, o, { 0.0f, 1.0f }), owner (&o), index (i),
+          label (juce::String::fromUTF8 (d.label.c_str())), defaultValue (d.defaultValue)
+    {
+    }
+    ~Parameter() override { notifyListenersOfDeletion(); }
+
+    void parameterChanged (float v, bool byAutomation) override
+    {
+        if (auto* o = owner.load())
+        {
+            if (auto* s = o->getSandbox()) s->setPluginParameter (index, v);
+            if (! byAutomation) o->edit.pluginChanged (*o);
+        }
+    }
+    std::optional<float> getDefaultValue() const override   { return defaultValue; }
+    juce::String getLabel() override                        { return label; }
+    juce::String getCurrentValueAsString() override
+    {
+        // Texte du plugin (« 2,5 kHz ») tant qu'il correspond à la valeur actuelle, sinon un pourcentage.
+        if (auto* o = owner.load())
+            if (auto* s = o->getSandbox())
+                if (std::abs (s->getPluginParameter (index) - getCurrentValue()) < 1.0e-4f)
+                {
+                    auto text = juce::String::fromUTF8 (s->getPluginParameterText (index).c_str());
+                    if (text.isNotEmpty()) return label.isNotEmpty() && ! text.endsWith (label) ? text + " " + label : text;
+                }
+        return valueToString (getCurrentValue());
+    }
+    juce::String valueToString (float v) override           { return juce::String (v * 100.0f, 1) + " %"; }
+    float stringToValue (const juce::String& s) override    { return juce::jlimit (0.0f, 1.0f, s.getFloatValue() / 100.0f); }
+
+    std::atomic<SandboxPlugin*> owner;
+    const int index;
+private:
+    juce::String label;
+    float defaultValue;
+};
+
 SandboxPlugin::SandboxPlugin (te::PluginCreationInfo info) : te::Plugin (info)
 {
     spec.referTo (state, specID, nullptr, "synth-pad");
     displayName.referTo (state, nameID, nullptr, juce::String::fromUTF8 ("Synthé nappe"));
     savedState.referTo (state, stateID, nullptr, {});
     midiScratch.resize (onde::kMaxMidiEvents);
+    paramTimer.setCallback ([this] { pollParameters(); });
+    paramTimer.startTimerHz (20);
+}
+
+te::AutomatableParameter* SandboxPlugin::getPluginParameter (int index) const
+{
+    return juce::isPositiveAndBelow (index, (int) byIndex.size()) ? byIndex[(size_t) index] : nullptr;
+}
+
+void SandboxPlugin::buildParameters()
+{
+    JUCE_ASSERT_MESSAGE_THREAD
+    if (paramsBuilt || sandbox == nullptr || sandbox->getState() != onde::PluginSandbox::State::running) return;
+    paramsBuilt = true;
+    const auto list = sandbox->getPluginParameters();
+    byIndex.assign (list.size(), nullptr);
+    std::map<juce::String, int> used;
+    for (size_t i = 0; i < list.size(); ++i)
+    {
+        const auto& d = list[i];
+        if ((d.flags & onde::paramAutomatable) == 0) continue;
+        auto name = juce::String::fromUTF8 (d.name.c_str()).trim();
+        if (name.isEmpty()) name = juce::String::fromUTF8 ("Paramètre ") + juce::String ((int) i + 1);
+        if (const int n = ++used[name]; n > 1) name << " (" << n << ")";
+        // Identifiant = index du plugin : stable d'une session à l'autre, garde l'automation enregistrée.
+        auto* p = new Parameter (*this, (int) i, juce::String ((int) i), name, d);
+        addAutomatableParameter (*p);
+        byIndex[i] = p;
+        p->setParameter (sandbox->getPluginParameter ((int) i), juce::dontSendNotification);
+    }
+    restoreChangedParametersFromState();
+    // Valeurs restaurées par le projet : le plugin les reçoit.
+    for (auto* p : byIndex)
+        if (p != nullptr) sandbox->setPluginParameter (p->index, p->getCurrentValue());
+}
+
+void SandboxPlugin::pollParameters()
+{
+    if (sandbox == nullptr || sandbox->getState() != onde::PluginSandbox::State::running) return;
+    if (! paramsBuilt) buildParameters();
+    // Réglages faits dans la fenêtre du plugin (ou par un préréglage) : Onde les suit, les enregistre et
+    // peut les automatiser.
+    sandbox->collectPluginParameterChanges ([this] (int index, float v)
+    {
+        if (auto* p = getPluginParameter (index))
+            if (std::abs (p->getCurrentValue() - v) > 1.0e-6f)
+                p->setParameter (v, juce::sendNotification);
+    });
 }
 
 SandboxPlugin::~SandboxPlugin()
 {
     onde::trace ("~SandboxPlugin", getName().toRawUTF8());
+    paramTimer.stopTimer();
+    for (auto* p : byIndex) if (p != nullptr) p->owner = nullptr;
     notifyListenersOfDeletion();
     if (sandbox) sandbox->stop();
     onde::trace ("~SandboxPlugin: terminé");
@@ -59,6 +154,9 @@ void SandboxPlugin::ensureSandbox (double sampleRate, int blockSize)
             if (mb.fromBase64Encoding (savedState.get()))
                 sandbox->loadState (std::vector<uint8_t> ((const uint8_t*) mb.getData(), (const uint8_t*) mb.getData() + mb.getSize()));
         }
+        // Sur le fil principal (ouverture, rendu hors ligne) : paramètres créés tout de suite, pour que
+        // l'automation enregistrée s'applique dès le premier bloc.
+        if (juce::MessageManager::existsAndIsCurrentThread()) buildParameters();
     }
 }
 

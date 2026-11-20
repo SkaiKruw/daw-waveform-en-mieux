@@ -61,6 +61,16 @@ namespace onde
 
         void setParameter (int index, float value) noexcept;
 
+        // Paramètres du plugin hébergé (VST3), valeurs normalisées 0..1.
+        struct ParamDesc { std::string name, label; float defaultValue = 0; int numSteps = 0; uint32_t flags = 0; };
+        std::vector<ParamDesc> getPluginParameters() const;              // liste publiée au chargement
+        void setPluginParameter (int index, float value) noexcept;       // n'importe quel fil, sans verrou
+        float getPluginParameter (int index) const noexcept;             // dernière valeur connue côté plugin
+        std::string getPluginParameterText (int index) const;            // texte affiché par le plugin
+        // Fil non temps réel : appelle f (index, valeur) pour chaque paramètre changé par le plugin lui-même
+        // (sa fenêtre, un préréglage) depuis le dernier appel.
+        void collectPluginParameterChanges (const std::function<void (int, float)>& f);
+
         // Thread audio : transport de l'hôte transmis au plugin (tempo, position, lecture).
         struct Transport
         {

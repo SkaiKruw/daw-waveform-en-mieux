@@ -18,6 +18,17 @@ namespace onde
 
     struct MidiEvent { uint32_t offset; uint8_t size; uint8_t data[3]; };
 
+    constexpr uint32_t kMaxPluginParams = 2048;   // paramètres d'un VST3 exposés à l'hôte (automation, modulation)
+    enum PluginParamFlags : uint32_t { paramAutomatable = 1, paramDiscrete = 2, paramBoolean = 4 };
+    struct PluginParamInfo
+    {
+        char     name[64];
+        char     label[16];      // unité (« Hz », « dB »…)
+        float    defaultValue;   // 0..1
+        uint32_t numSteps;
+        uint32_t flags;
+    };
+
     // Commandes non temps réel, traitées par le fil principal du worker.
     enum class Command : uint32_t { none = 0, showEditor, hideEditor, saveState, loadState };
 
@@ -77,6 +88,16 @@ namespace onde
 
         uint32_t stateSize;
         uint8_t  state[kMaxStateBytes];
+
+        // Paramètres du plugin (VST3) : liste publiée par le worker avant workerReady, puis valeurs dans les
+        // deux sens, sans verrou. Un bit « modifié » par paramètre et par sens (mots de 32 bits).
+        std::atomic<uint32_t> numPluginParams;
+        PluginParamInfo paramInfo[kMaxPluginParams];
+        float hostValues[kMaxPluginParams];                          // hôte -> plugin (automation, modulation)
+        std::atomic<uint32_t> hostDirty[kMaxPluginParams / 32];
+        float pluginValues[kMaxPluginParams];                        // plugin -> hôte (fenêtre du plugin, préréglage)
+        std::atomic<uint32_t> pluginDirty[kMaxPluginParams / 32];
+        char valueText[kMaxPluginParams][24];                        // valeur affichée par le plugin (« 440 Hz »)
     };
 
     static_assert (std::atomic<uint64_t>::is_always_lock_free, "atomics must be lock-free across processes");

@@ -622,6 +622,82 @@ private:
                     sp->flushPluginStateToValueTree(); juce::MemoryBlock mb; mb.fromBase64Encoding (sp->savedState.get()); stateBytes = (int) mb.getSize();
                     dir.getChildFile ("plugin-" + juce::String (n) + ".state").replaceWithData (mb.getData(), mb.getSize());
                 }
+                // Paramètres du plugin exposés dans Onde : réglage envoyé au plugin, retour d'un préréglage chargé,
+                // automation audible au rendu.
+                if (running)
+                {
+                    auto* sb = sp->getSandbox();
+                    int count = 0, first = -1, level = -1;
+                    for (int i = 0; i < sp->getNumPluginParameters(); ++i)
+                        if (auto* prm = sp->getPluginParameter (i))
+                        {
+                            ++count;
+                            const auto nm = prm->getParameterName().toLowerCase();
+                            const bool avoid = nm.contains ("bypass") || nm.contains ("preset") || nm.contains ("program") || nm.contains ("midi");
+                            if (first < 0 && ! avoid) first = i;
+                            if (level < 0 && ! inst && (nm == "mix" || nm.contains ("dry/wet") || nm.contains ("wet") || nm.contains ("output") || nm.contains ("gain")) && ! avoid) level = i;
+                        }
+                    bool sent = false, followed = false;
+                    juce::String before, after;
+                    if (first >= 0)
+                    {
+                        auto* prm = sp->getPluginParameter (first);
+                        const float original = prm->getCurrentValue(), target = original < 0.5f ? 0.8f : 0.2f;
+                        before = prm->getCurrentValueAsString();
+                        prm->setParameter (target, juce::sendNotification);
+                        for (int k = 0; k < 20 && std::abs (sb->getPluginParameter (first) - target) > 0.02f; ++k) pump (100);
+                        pump (300);
+                        after = prm->getCurrentValueAsString();
+                        // Le plugin peut arrondir (paramètre à crans) : on accepte sa valeur la plus proche.
+                        sent = std::abs (sb->getPluginParameter (first) - target) < 0.2f && std::abs (sb->getPluginParameter (first) - original) > 1.0e-4f;
+                        // Retour : on recharge le préréglage d'origine dans le plugin, Onde doit suivre.
+                        juce::MemoryBlock mb; mb.fromBase64Encoding (sp->savedState.get());
+                        sb->loadState (std::vector<uint8_t> ((const uint8_t*) mb.getData(), (const uint8_t*) mb.getData() + mb.getSize()));
+                        for (int k = 0; k < 30 && std::abs (prm->getCurrentValue() - original) > 1.0e-3f; ++k) pump (100);
+                        followed = std::abs (prm->getCurrentValue() - original) <= 1.0e-3f;
+                    }
+                    if (first < 0)   // seulement des paramètres techniques (MIDI, bypass) : rien à régler
+                        check (count > 0, e.name + U (" : ") + juce::String (count) + U (" paramètre(s) exposé(s), uniquement techniques (MIDI, contournement)"));
+                    else
+                    check (count > 0 && sent && followed,
+                           e.name + U (" : ") + juce::String (count) + U (" paramètres exposés ; « ")
+                           + (first >= 0 ? sp->getPluginParameter (first)->getParameterName() : juce::String ("?")) + U (" » réglé depuis Onde (")
+                           + before + U (" → ") + after + U (") puis rendu au plugin par son préréglage ")
+                           + (followed ? U ("(Onde suit)") : U ("(NON SUIVI)")));
+
+                    if (level >= 0)
+                    {
+                        // Automation : paramètre à 0 pendant 2 s puis au maximum ; le niveau doit changer.
+                        auto* prm = sp->getPluginParameter (level);
+                        auto& curve = prm->getCurve();
+                        curve.addPoint (te::TimePosition(), 0.0f, 1.0f, nullptr);
+                        curve.addPoint (te::TimePosition::fromSeconds (2.0), 1.0f, 1.0f, nullptr);
+                        const auto autoWav = dir.getChildFile ("plugin-" + juce::String (n) + "-automation.wav");
+                        rp.destFile = autoWav;
+                        autoWav.deleteFile();
+                        te::Renderer::renderToFile ("Test automation", rp);
+                        // Écart avec le rendu sans automation, moitié par moitié (une réverbération à 0 % ou 100 %
+                        // garde à peu près le même niveau, mais le son change).
+                        double ra = 0, rb = 0;
+                        const auto plain = readAll (wav, ra), automated = readAll (autoWav, rb);
+                        auto changeDb = [&] (int half)
+                        {
+                            const int len2 = (int) (2.0 * 48000), s0 = half * len2 + 4800;
+                            double diff = 0, ref = 0;
+                            for (int i = s0; i < std::min ({ s0 + len2 - 9600, plain.getNumSamples(), automated.getNumSamples() }); ++i)
+                            {
+                                const double a = plain.getSample (0, i), b = automated.getSample (0, i);
+                                diff += (a - b) * (a - b); ref += a * a;
+                            }
+                            return 10.0 * std::log10 ((diff + 1.0e-12) / (ref + 1.0e-12));
+                        };
+                        const double c0 = changeDb (0), c1 = changeDb (1);
+                        check (c0 > -30.0 && c1 > -30.0, e.name + U (" : automation de « ") + prm->getParameterName() + U (" » (0 puis 100 %) audible au rendu : écart ")
+                                                         + juce::String (c0, 1) + U (" dB puis ") + juce::String (c1, 1) + U (" dB par rapport au réglage fixe"));
+                        for (int k = curve.getNumPoints(); --k >= 0;) curve.removePoint (k, nullptr);
+                    }
+                }
+
                 const auto stats = sp && sp->getSandbox() ? sp->getSandbox()->getStats() : onde::PluginSandbox::Stats();
                 std::printf ("  info   : %-24s %s · rendu %d · niveau %.4f · fenêtre %s · préréglage %d octets · latence %.1f ms · blocs manqués %llu · %u ms\n",
                              e.name.toRawUTF8(), inst ? "instrument" : "effet", (int) rendered, rms,
@@ -1884,6 +1960,33 @@ private:
             }
             for (auto* list = t->getModifierList(); list != nullptr && list->getModifiers().size() > 0;)
                 list->getModifiers()[0]->remove();
+
+            // Automation d'un paramètre d'effet (pas seulement volume et panoramique) : gain de la cloche
+            // à 1 kHz à 0 dB puis +12 dB à partir de 2 s.
+            {
+                auto eqAuto = ed.getPluginCache().createNewPlugin (ondefx::EqPlugin::xmlTypeName, {});
+                t->pluginList.insertPlugin (eqAuto, 0, nullptr);
+                const auto flatAgain = renderTrack ("automation-eq-neutre");
+                if (auto* eq3 = dynamic_cast<ondefx::EqPlugin*> (eqAuto.get()))
+                {
+                    auto& curve = eq3->param (ondefx::EqPlugin::bandId (3, "gain"))->getCurve();
+                    curve.addPoint (te::TimePosition(), 0.0f, 1.0f, nullptr);
+                    curve.addPoint (te::TimePosition::fromSeconds (2.0), 12.0f, 1.0f, nullptr);
+                    const auto autoBuf = renderTrack ("automation-eq");
+                    // toneDb mesure de 2 à 3 s ; avant 2 s, on mesure à part le premier quart de seconde.
+                    const double late = toneDb (autoBuf, 48000, 1000) - toneDb (flatAgain, 48000, 1000);
+                    double early = 0;
+                    {
+                        float a = 0, b = 0;
+                        for (int i = 4800; i < 48000; ++i) { a = std::max (a, std::abs (autoBuf.getSample (0, i))); b = std::max (b, std::abs (flatAgain.getSample (0, i))); }
+                        early = juce::Decibels::gainToDecibels (a) - juce::Decibels::gainToDecibels (b);
+                    }
+                    check (std::abs (late - 12.0) < 0.6 && std::abs (early) < 0.5,
+                           U ("automation d'un paramètre d'effet (cloche 1 kHz d'Onde EQ) : ") + juce::String (early, 2) + U (" dB avant 2 s, ")
+                           + juce::String (late, 2) + U (" dB après (attendu 0 puis +12)"));
+                }
+                eqAuto->deleteFromParent();
+            }
         }
 
         std::printf ("\n%s\n", failures == 0 ? "INTERFACE OK — toutes les vérifications passent." : "DES VÉRIFICATIONS ÉCHOUENT");

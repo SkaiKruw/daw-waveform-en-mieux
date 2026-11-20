@@ -132,6 +132,8 @@ public:
         if (audioThread.joinable()) audioThread.join();
         stopTimer();
         window = nullptr;
+        for (auto* p : params) p->removeListener (&watcher);
+        params.clear();
         if (instance) instance->releaseResources();
         instance = nullptr;
     }
@@ -177,11 +179,95 @@ private:
 
         copyText (b.pluginName, sizeof (b.pluginName), desc->name);
         b.isInstrument = desc->isInstrument ? 1u : 0u;
+        publishParameters (b);
         // Pas de hasEditor() ici : pour un VST3, il crée la vue du plugin pour vérifier qu'elle existe, et certains
         // plugins (Neural DSP…) attendent alors indéfiniment un événement d'interface que la boucle de messages,
         // pas encore lancée, ne délivre jamais. La fenêtre est créée à la demande (showEditor).
         b.hasEditor = 1u;
         return true;
+    }
+
+    //==========================================================================
+    // Paramètres : liste publiée une fois, puis valeurs échangées sans verrou avec l'hôte.
+    struct ParamWatcher  : public juce::AudioProcessorParameter::Listener
+    {
+        explicit ParamWatcher (PluginHostApp& a) : app (a) {}
+        void parameterValueChanged (int index, float v) override { app.changedByPlugin (index, v); }
+        void parameterGestureChanged (int, bool) override {}
+        PluginHostApp& app;
+    };
+
+    void publishParameters (SharedBlock& b)
+    {
+        for (auto& w : b.hostDirty)   w.store (0);
+        for (auto& w : b.pluginDirty) w.store (0);
+        const auto& all = instance->getParameters();
+        const int n = juce::jmin (all.size(), (int) kMaxPluginParams);
+        for (int i = 0; i < n; ++i)
+        {
+            auto* p = all.getUnchecked (i);
+            params.add (p);
+            auto& info = b.paramInfo[i];
+            copyText (info.name, sizeof (info.name), p->getName ((int) sizeof (info.name) - 1));
+            copyText (info.label, sizeof (info.label), p->getLabel());
+            info.defaultValue = p->getDefaultValue();
+            info.numSteps = (uint32_t) juce::jmax (0, p->getNumSteps());
+            info.flags = (p->isAutomatable() ? paramAutomatable : 0u) | (p->isDiscrete() ? paramDiscrete : 0u) | (p->isBoolean() ? paramBoolean : 0u);
+            b.pluginValues[i] = p->getValue();
+            copyText (b.valueText[i], sizeof (b.valueText[i]), p->getCurrentValueAsText());
+            p->addListener (&watcher);
+        }
+        b.numPluginParams.store ((uint32_t) n, std::memory_order_release);
+    }
+
+    void changedByPlugin (int index, float v)
+    {
+        if (! juce::isPositiveAndBelow (index, params.size())) return;
+        auto& b = channel.block();
+        b.pluginValues[index] = v;
+        b.pluginDirty[index >> 5].fetch_or (1u << (index & 31), std::memory_order_release);
+        textDirty[index >> 5].fetch_or (1u << (index & 31), std::memory_order_release);
+    }
+
+    // Fil audio, avant chaque bloc : valeurs envoyées par l'hôte (automation, modulation, réglage dans Onde).
+    void applyHostValues (SharedBlock& b) noexcept
+    {
+        const int words = (params.size() + 31) / 32;
+        for (int w = 0; w < words; ++w)
+        {
+            const uint32_t bits = b.hostDirty[w].exchange (0, std::memory_order_acq_rel);
+            for (int bit = 0; bits != 0 && bit < 32; ++bit)
+                if ((bits >> bit) & 1u)
+                {
+                    const int i = w * 32 + bit;
+                    if (i >= params.size()) continue;
+                    const float v = juce::jlimit (0.0f, 1.0f, b.hostValues[i]);
+                    params.getUnchecked (i)->setValue (v);
+                    b.pluginValues[i] = v;
+                    textDirty[w].fetch_or (1u << bit, std::memory_order_release);
+                }
+        }
+    }
+
+    // Fil principal : textes des valeurs changées, et relevé des changements que le plugin n'a pas signalés
+    // (préréglage chargé, réglages internes).
+    void refreshParameterTexts (SharedBlock& b)
+    {
+        if (params.isEmpty()) return;
+        if (++scanCounter % 10 == 0)
+            for (int i = 0; i < params.size(); ++i)
+            {
+                const float v = params.getUnchecked (i)->getValue();
+                if (std::abs (v - b.pluginValues[i]) > 1.0e-6f) changedByPlugin (i, v);
+            }
+        for (int w = 0; w < (params.size() + 31) / 32; ++w)
+        {
+            const uint32_t bits = textDirty[w].exchange (0, std::memory_order_acq_rel);
+            for (int bit = 0; bits != 0 && bit < 32; ++bit)
+                if ((bits >> bit) & 1u)
+                    if (const int i = w * 32 + bit; i < params.size())
+                        copyText (b.valueText[i], sizeof (b.valueText[i]), params.getUnchecked (i)->getCurrentValueAsText());
+        }
     }
 
     void audioLoop()
@@ -220,6 +306,7 @@ private:
                     for (uint32_t i = 0; i < juce::jmin (s.numMidiEvents, kMaxMidiEvents); ++i)
                         midi.addEvent (s.midi[i].data, s.midi[i].size, (int) juce::jmin<uint32_t> (s.midi[i].offset, (uint32_t) n - 1));
 
+                    applyHostValues (b);
                     if ((s.isOffline != 0) != instance->isNonRealtime())
                         instance->setNonRealtime (s.isOffline != 0);
                     playHead->current = &s;
@@ -244,6 +331,7 @@ private:
     void timerCallback() override
     {
         auto& b = channel.block();
+        refreshParameterTexts (b);
         switch (channel.pendingCommand())
         {
             case Command::none: break;
@@ -292,6 +380,10 @@ private:
     std::unique_ptr<EditorWindow> window;
     juce::AudioBuffer<float> scratch;
     juce::MidiBuffer midi;
+    juce::Array<juce::AudioProcessorParameter*> params;
+    ParamWatcher watcher { *this };
+    std::atomic<uint32_t> textDirty[kMaxPluginParams / 32] {};
+    int scanCounter = 0;
     std::thread audioThread;
     std::atomic<bool> running { true };
 };

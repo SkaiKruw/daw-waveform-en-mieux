@@ -51,7 +51,8 @@ que les utilisateurs mettent en avant dans les tests de logiciels et de plugins.
 | Limiteur True Peak, mesure LUFS | 🟡 → ✅ | Onde Limiteur 2 (cette version) |
 | Bande de voie intégrée (EQ, comp, gate, saturation par voie) | ❌ | |
 | Modulateurs (LFO, enveloppe, pas à pas) sur n'importe quel paramètre | ✅ | LFO, pas à pas, suiveur d'enveloppe, aléatoire ; profondeur par affectation |
-| Automation et modulation des paramètres des VST3 isolés | ❌ | priorité haute : exposer les paramètres du processus isolé |
+| Automation et modulation des paramètres des VST3 isolés | ✅ | paramètres publiés par le processus isolé, dans les deux sens (fenêtre du plugin → Onde) |
+| Automation de tous les paramètres dans la fenêtre de projet | ✅ | volume, panoramique et chaque paramètre de chaque effet |
 | Faders VCA | ❌ | |
 | Control Room | ❌ | |
 | Réverbération, delay, modulation, saturation de qualité | 🟡 | effets de base Tracktion ; versions Onde prévues |
@@ -71,9 +72,30 @@ que les utilisateurs mettent en avant dans les tests de logiciels et de plugins.
 ## Ordre de travail proposé
 
 1. Effets Onde 2 : EQ dynamique et M/S, compresseur complet, limiteur True Peak et LUFS (en cours).
-2. ~~Modulateurs (LFO, enveloppe)~~ fait. Ensuite : paramètres des VST3 isolés (automation, modulation), automation de tous les paramètres dans la fenêtre de projet.
+2. ~~Modulateurs (LFO, enveloppe)~~, ~~paramètres des VST3 isolés~~, ~~automation de tous les paramètres~~ : fait. Ensuite : « tout est déjà là » (voir la dernière section).
 3. Couloirs de contrôleurs MIDI dans l'éditeur de notes.
 4. Geler / rendre une piste sur place ; faders VCA.
 5. Couloirs de prises et comping.
 6. Piste d'arrangement.
 7. Effets Onde : réverbération, delay, saturation, de-esser, gate.
+
+## « Tout est déjà là » : l'accueil d'un logiciel grand public, la puissance de Cubase
+
+Ce que les débutants aiment dans les logiciels de musique grand public (GarageBand en tête) : on l'ouvre, et il y a
+déjà de quoi faire un morceau entier. Des instruments qui sonnent tout de suite, une batterie qui joue toute seule,
+des boucles, des réglages simples, aucun téléchargement ni configuration. Onde reprend cette **idée** (pas le contenu
+ni l'apparence : instruments, sons et boucles sont créés par Onde, de façon originale).
+
+| Ce qu'on attend en ouvrant le logiciel | Onde aujourd'hui | Ce qu'il faut faire |
+| --- | --- | --- |
+| Des instruments prêts à jouer, rangés par famille (piano, claviers, basses, cordes, nappes, leads, batterie) | 🟡 4OSC et synthé de démonstration | **Bibliothèque d'instruments Onde** : moteurs de synthèse originaux (piano et piano électrique par modélisation, basses, nappes, cordes, cuivres synthétiques, boîte à rythmes par synthèse) avec des dizaines de préréglages nommés en français. Rien à télécharger. |
+| Une batterie qui joue toute seule et suit le morceau | ❌ | **Batteur Onde** : styles (pop, rock, hip-hop, électro, ballade), complexité et intensité réglables, remplissages en fin de section, suit la piste d'arrangement. |
+| Des boucles à glisser, calées sur le tempo et la tonalité du projet | ❌ | **Boucles Onde** : générées par Onde à partir de ses instruments (batterie, basse, accords, arpèges), toujours au tempo et dans la tonalité du projet, prévisualisation en un clic. |
+| Quelques gros boutons simples par instrument | 🟡 fenêtres d'effets détaillées | **Commandes rapides** : 4 à 8 macros par piste (« Chaleur », « Espace », « Brillance », « Punch ») qui pilotent plusieurs réglages à la fois (s'appuie sur les modulateurs et l'automation de tous les paramètres). |
+| Des sons de voix et de guitare tout faits | 🟡 effets Onde | **Chaînes prêtes** : « Voix pop », « Voix rap », « Podcast », « Guitare claire », « Guitare saturée », « Basse ronde »… construites avec les effets Onde. |
+| Jouer sans clavier MIDI | ❌ | **Clavier à l'écran et clavier de l'ordinateur** (touches A à L = notes, vélocité, octaves). |
+| Démarrer par ce qu'on veut faire | ✅ écran d'accueil, modèles | Modèles « Beat », « Groupe », « Voix et guitare », « Podcast », prêts avec instruments et chaînes. |
+| Apprendre | ❌ | Bulles d'aide au premier lancement, projet de démonstration commenté. |
+
+Ordre proposé : clavier à l'écran → bibliothèque d'instruments → chaînes prêtes et commandes rapides → batteur →
+boucles générées → modèles enrichis.

@@ -331,6 +331,63 @@ namespace onde
             block->params[index] = value;
     }
 
+    std::vector<PluginSandbox::ParamDesc> PluginSandbox::getPluginParameters() const
+    {
+        std::vector<ParamDesc> list;
+        if (block == nullptr) return list;
+        const uint32_t n = std::min (block->numPluginParams.load (std::memory_order_acquire), kMaxPluginParams);
+        list.reserve (n);
+        for (uint32_t i = 0; i < n; ++i)
+        {
+            const auto& info = block->paramInfo[i];
+            ParamDesc d;
+            d.name.assign (info.name, strnlen (info.name, sizeof (info.name)));
+            d.label.assign (info.label, strnlen (info.label, sizeof (info.label)));
+            d.defaultValue = info.defaultValue;
+            d.numSteps = (int) info.numSteps;
+            d.flags = info.flags;
+            list.push_back (std::move (d));
+        }
+        return list;
+    }
+
+    void PluginSandbox::setPluginParameter (int index, float value) noexcept
+    {
+        if (block == nullptr || index < 0 || index >= (int) kMaxPluginParams) return;
+        block->hostValues[index] = value;
+        block->hostDirty[index >> 5].fetch_or (1u << (index & 31), std::memory_order_release);
+    }
+
+    float PluginSandbox::getPluginParameter (int index) const noexcept
+    {
+        if (block == nullptr || index < 0 || index >= (int) kMaxPluginParams) return 0.0f;
+        return block->pluginValues[index];
+    }
+
+    std::string PluginSandbox::getPluginParameterText (int index) const
+    {
+        if (block == nullptr || index < 0 || index >= (int) kMaxPluginParams) return {};
+        char text[sizeof (block->valueText[0])];
+        std::memcpy (text, block->valueText[index], sizeof (text));
+        return std::string (text, strnlen (text, sizeof (text)));
+    }
+
+    void PluginSandbox::collectPluginParameterChanges (const std::function<void (int, float)>& f)
+    {
+        if (block == nullptr) return;
+        const uint32_t n = std::min (block->numPluginParams.load (std::memory_order_acquire), kMaxPluginParams);
+        for (uint32_t w = 0; w < (n + 31) / 32; ++w)
+        {
+            const uint32_t bits = block->pluginDirty[w].exchange (0, std::memory_order_acq_rel);
+            for (uint32_t b = 0; bits != 0 && b < 32; ++b)
+                if ((bits >> b) & 1u)
+                {
+                    const uint32_t index = w * 32 + b;
+                    if (index < n) f ((int) index, block->pluginValues[index]);
+                }
+        }
+    }
+
     bool PluginSandbox::sendCommand (Command c, int timeoutMs)
     {
         if (block == nullptr || state.load() != State::running)

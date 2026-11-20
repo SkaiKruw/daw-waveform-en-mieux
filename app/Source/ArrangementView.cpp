@@ -176,7 +176,7 @@ public:
 
         styleButton (paramBtn);
         paramBtn.setColour (juce::TextButton::buttonColourId, theme::display);
-        paramBtn.onClick = [this] { usePan = ! usePan; sync(); repaint(); };
+        paramBtn.onClick = [this] { showAutomationMenu(); };
         paramBtn.setTooltip (U ("Paramètre automatisé (cliquer pour changer)"));
         addChildComponent (paramBtn);
 
@@ -199,8 +199,11 @@ public:
 
     te::AudioTrack& track;
     const te::EditItemID trackID { track.itemID };
-    bool usePan = false;
-    int depth = 0;                                   // niveau d'imbrication dans les dossiers
+    // Paramètre de la piste d'automation : "" = volume, "pan", ou "<id de l'effet>:<id du paramètre>".
+    juce::String autoKey;
+    bool isVolume() const { return autoKey.isEmpty(); }
+    bool isPan() const    { return autoKey == "pan"; }
+    int depth = 0;                                  // niveau d'imbrication dans les dossiers
 
     bool hasFailure() const
     {
@@ -216,9 +219,26 @@ public:
 
     te::AutomatableParameter* param() const
     {
+        if (! isVolume() && ! isPan())
+        {
+            const auto pluginID = autoKey.upToFirstOccurrenceOf (":", false, false), paramID = autoKey.fromFirstOccurrenceOf (":", false, false);
+            for (auto* plugin : track.pluginList)
+                if (plugin->itemID.toString() == pluginID)
+                    for (auto* p : plugin->getAutomatableParameters())
+                        if (p->paramID == paramID) return p;
+            return nullptr;           // effet retiré : la piste d'automation revient au volume (sync)
+        }
         auto* v = track.getVolumePlugin();
         if (v == nullptr) return nullptr;
-        return usePan ? v->panParam.get() : v->volParam.get();
+        return isPan() ? v->panParam.get() : v->volParam.get();
+    }
+
+    juce::String paramTitle() const
+    {
+        if (isVolume()) return "Volume";
+        if (isPan()) return U ("Panoramique");
+        if (auto* p = param()) return (p->getPlugin() != nullptr ? p->getPlugin()->getName() + U (" · ") : juce::String()) + p->getParameterName();
+        return "Volume";
     }
 
     void sync()
@@ -231,7 +251,9 @@ public:
         autoBtn.setToggleState (autoShown(), juce::dontSendNotification);
         if (! nameLabel.isBeingEdited()) nameLabel.setText (track.getName(), juce::dontSendNotification);
         paramBtn.setVisible (autoShown());
-        paramBtn.setButtonText (usePan ? U ("Panoramique ▾") : U ("Volume ▾"));
+        if (! isVolume() && ! isPan() && param() == nullptr) autoKey = {};
+        paramBtn.setButtonText (paramTitle() + U (" ▾"));
+        paramBtn.setTooltip (paramTitle() + U (" — cliquer pour automatiser un autre paramètre"));
         const bool failed = hasFailure();
         restartBtn.setVisible (failed);
         if (failed != wasFailed || autoShown() != wasAuto) { wasFailed = failed; wasAuto = autoShown(); owner.layoutRows(); }
@@ -492,9 +514,10 @@ public:
         const auto vr = p.getValueRange();
         return vr.getStart() + n * vr.getLength();
     }
-    juce::String valueText (float v) const
+    juce::String valueText (te::AutomatableParameter& prm, float v) const
     {
-        if (usePan) { const int p = juce::roundToInt (v * 100.0f); return p == 0 ? juce::String ("C") : (p < 0 ? "G " + juce::String (-p) : "D " + juce::String (p)); }
+        if (isPan()) { const int p = juce::roundToInt (v * 100.0f); return p == 0 ? juce::String ("C") : (p < 0 ? "G " + juce::String (-p) : "D " + juce::String (p)); }
+        if (! isVolume()) return std::abs (v - prm.getCurrentValue()) < 1.0e-5f ? prm.getCurrentValueAsString() : prm.valueToString (v);
         const float db = te::volumeFaderPositionToDB (v);
         return db < -90.0f ? U ("-∞ dB") : juce::String (db, 1) + " dB";
     }
@@ -513,7 +536,7 @@ public:
         if (p == nullptr) return;
         auto& curve = p->getCurve();
         g.setColour (theme::muted); g.setFont (theme::ui (11.0f));
-        g.drawText (valueText (p->getCurrentValue()), 34, a.getY() + 32, headerW - 50, 16, juce::Justification::centredLeft);
+        g.drawText (valueText (*p, p->getCurrentValue()), 34, a.getY() + 32, headerW - 50, 16, juce::Justification::centredLeft);
 
         const auto line = juce::Colour (0xffe8d34a);
         juce::Path path;
@@ -1002,14 +1025,34 @@ public:
 
     void showAutomationMenu()
     {
+        // Volume, panoramique, puis chaque effet de la piste (effets Onde, Tracktion et VST3 isolés) avec tous
+        // ses paramètres ; « ● » = paramètre déjà automatisé.
         juce::PopupMenu m;
-        m.addItem (1, "Volume", true, ! usePan);
-        m.addItem (2, "Panoramique", true, usePan);
+        juce::StringArray keys;
+        auto mark = [] (te::AutomatableParameter* p, const juce::String& name) { return p != nullptr && p->getCurve().getNumPoints() > 0 ? U ("● ") + name : name; };
+        auto* vp = track.getVolumePlugin();
+        keys.add ({});    m.addItem (100, mark (vp ? vp->volParam.get() : nullptr, "Volume"), true, isVolume());
+        keys.add ("pan"); m.addItem (101, mark (vp ? vp->panParam.get() : nullptr, U ("Panoramique")), true, isPan());
+        for (auto* plugin : track.pluginList)
+        {
+            if (dynamic_cast<te::VolumeAndPanPlugin*> (plugin) != nullptr || dynamic_cast<te::LevelMeterPlugin*> (plugin) != nullptr) continue;
+            juce::PopupMenu sub;
+            bool any = false;
+            for (auto* p : plugin->getAutomatableParameters())
+            {
+                const auto key = plugin->itemID.toString() + ":" + p->paramID;
+                keys.add (key);
+                sub.addItem (99 + keys.size(), mark (p, p->getParameterName()), true, key == autoKey);
+                any = any || p->getCurve().getNumPoints() > 0;
+            }
+            if (sub.getNumItems() > 0) m.addSubMenu ((any ? U ("● ") : juce::String()) + plugin->getName(), sub, true, nullptr, autoKey.startsWith (plugin->itemID.toString() + ":"));
+            else m.addItem (-1, plugin->getName() + U (" (paramètres pas encore disponibles)"), false);
+        }
         m.addSeparator();
         m.addItem (3, U ("Effacer toute l'automation de ce paramètre"));
-        m.showMenuAsync ({}, [this] (int r)
+        m.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (&paramBtn), [this, keys] (int r)
         {
-            if (r == 1 || r == 2) { usePan = r == 2; sync(); repaint(); }
+            if (r >= 100 && r - 100 < keys.size()) { autoKey = keys[r - 100]; sync(); repaint(); }
             if (r == 3) if (auto* p = param())
             {
                 auto& um = ctx.edit->getUndoManager();
