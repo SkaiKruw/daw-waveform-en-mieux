@@ -1510,6 +1510,60 @@ private:
             snapshot (hubPanel, dir.getChildFile ("12-accueil.png"));
         }
 
+        // Historique des modifications et « Rendre définitif » (projet « Production » ouvert ci-dessus).
+        {
+            auto& ed = *mc->getEdit();
+            auto& c3 = mc->getContext();
+            auto& um = ed.getUndoManager();
+            um.clearUndoHistory();
+            const int tracks0 = te::getAudioTracks (ed).size();
+            um.beginNewTransaction (U ("Ajouter une piste"));  c3.addAudioTrack();
+            um.beginNewTransaction (U ("Renommer"));           te::getAudioTracks (ed).getLast()->setName ("Essai");
+            um.beginNewTransaction (U ("Ajouter une piste"));  c3.addAudioTrack();
+            um.beginNewTransaction();
+            HistoryPanel history (c3);
+            const int n = history.numEntries();
+            history.goTo (0);
+            const int afterUndo = te::getAudioTracks (ed).size();
+            history.goTo (n - 1);
+            const int afterRedo = te::getAudioTracks (ed).size();
+            check (n >= 4 && afterUndo == tracks0 && afterRedo == tracks0 + 2,
+                   U ("historique : ") + juce::String (n) + U (" étapes ; retour au début (") + juce::String (afterUndo) + U (" pistes) puis à la fin (") + juce::String (afterRedo) + ")");
+            pump (200);
+            snapshot (history, dir.getChildFile ("13-historique.png"));
+
+            // Rendre définitif : un événement réglé (gain, inversion, fondu) rendu dans un fichier.
+            const auto source = dir.getChildFile ("export-format.wav");
+            auto* target = te::getAudioTracks (ed).getLast();
+            auto clipPtr = target->insertWaveClip ("boucle", source, { { te::TimePosition::fromSeconds (1.0), te::TimePosition::fromSeconds (5.0) }, te::TimeDuration::fromSeconds (2.0) }, false);
+            auto* w = clipPtr.get();
+            check (w != nullptr, U ("événement à rendre définitif inséré"));
+            if (w != nullptr)
+            {
+                w->setGainDB (-6.0f);
+                w->setIsReversed (true);
+                w->setFadeIn (te::TimeDuration::fromSeconds (1.0));
+                EditContext::prepareAudioProxies (ed, 60000);
+                const auto before = dir.getChildFile ("definitif-avant.wav"), after = dir.getChildFile ("definitif-apres.wav");
+                renderEdit (ed, before, { target });
+                juce::String err;
+                c3.selectClip (w);
+                auto* nc = AudioEditorView::bounce (c3, *w, err);
+                renderEdit (ed, after, { target });
+                double r1 = 0, r2 = 0;
+                const auto a = readAll (before, r1), b = readAll (after, r2);
+                const double match = sdr (a, b);
+                check (nc != nullptr && std::abs (nc->getGainDB()) < 0.01f && ! nc->getIsReversed() && nc->getFadeIn().inSeconds() < 0.001
+                           && std::abs (nc->getPosition().getStart().inSeconds() - 1.0) < 1e-6 && match > 30.0,
+                       U ("« Rendre définitif » : même son (") + juce::String (match, 1) + U (" dB), réglages appliqués au fichier ") + err);
+                um.undo();
+                bool restored = false;
+                for (auto* c : target->getClips())
+                    if (auto* ow = dynamic_cast<te::WaveAudioClip*> (c)) restored = restored || (ow->getIsReversed() && std::abs (ow->getGainDB() + 6.0f) < 0.01f);
+                check (restored, U ("« Annuler » rend l'événement d'origine et ses réglages"));
+            }
+        }
+
         std::printf ("\n%s\n", failures == 0 ? "INTERFACE OK — toutes les vérifications passent." : "DES VÉRIFICATIONS ÉCHOUENT");
         std::fflush (stdout);
         trace ("fin du scénario, fermeture de la fenêtre");

@@ -24,6 +24,9 @@ public:
     static juce::File sourceFileOf (te::WaveAudioClip&);
     static float peakOf (te::WaveAudioClip&);                     // crête de la partie jouée (0..1+)
     static bool normalise (te::WaveAudioClip&, float targetDb = -0.1f);
+    // Rendre définitif : réécrit l'événement tel qu'il sonne (gain, fondus, inversion, transposition, mode
+    // musical, sans les effets de la piste) dans un nouveau fichier, qui le remplace. Annulable.
+    static te::WaveAudioClip* bounce (EditContext&, te::WaveAudioClip&, juce::String& error);
     bool trimToSelection();
     bool deleteSelection();
     void setSelection (juce::Range<double> fileSeconds) { selection = fileSeconds; repaint(); }
@@ -61,7 +64,8 @@ private:
     juce::Slider gain, pitch;
     juce::Label gainLabel, pitchLabel;
     juce::TextButton normaliseBtn { "Normaliser" }, reverseBtn { "Inverser" }, trimBtn { U ("Rogner à la sélection") },
-                     deleteBtn { U ("Supprimer la sélection") }, fitBtn { U ("Tout voir") };
+                     deleteBtn { U ("Supprimer la sélection") }, fitBtn { U ("Tout voir") },
+                     bounceBtn { U ("Rendre définitif") };
 
     enum class Drag { none, select, fadeIn, fadeOut } drag = Drag::none;
     double dragAnchor = 0.0;

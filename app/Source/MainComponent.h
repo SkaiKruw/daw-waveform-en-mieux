@@ -12,6 +12,7 @@
 #include "RemotePanel.h"
 #include "AboutPanel.h"
 #include "HubPanel.h"
+#include "HistoryPanel.h"
 #include "CommandPalette.h"
 #include "Panels.h"
 
@@ -135,7 +136,7 @@ private:
     CommandPalette palette { ctx };
     RemoteControl remote { ctx };                       // télécommande depuis un téléphone
     juce::Component::SafePointer<juce::DialogWindow> remoteWindow;
-    juce::Component::SafePointer<juce::DialogWindow> hubWindow;
+    juce::Component::SafePointer<juce::DialogWindow> hubWindow, historyWindow;
     juce::String status;
     juce::String paintedStatus;
     int statusTick = 0;

@@ -109,6 +109,7 @@ MainComponent::~MainComponent()
     onde::trace ("~MainComponent: début");
     if (remoteWindow != nullptr) delete remoteWindow.getComponent();
     if (hubWindow != nullptr) delete hubWindow.getComponent();
+    if (historyWindow != nullptr) delete historyWindow.getComponent();
     remote.stop();
     juce::Desktop::getInstance().removeFocusChangeListener (this);
     catalog.removeChangeListener (this);
@@ -297,6 +298,11 @@ void MainComponent::registerActions()
     ctx.addAction ("edit.undo", "Annuler", U ("Édition"), KP ('z', ctrl, 0), [this] { if (edit) { edit->getUndoManager().undo(); setStatus ("Annuler : " + edit->getUndoManager().getRedoDescription()); ctx.changed(); } });
     ctx.addAction ("edit.redo", U ("Rétablir"), U ("Édition"), KP ('y', ctrl, 0), [this] { if (edit) { edit->getUndoManager().redo(); setStatus (U ("Rétabli")); ctx.changed(); } })
         ->extraKeys.add (KP ('z', ctrl | shift, 0));
+    ctx.addAction ("edit.history", U ("Historique des modifications…"), U ("Édition"), {}, [this]
+    {
+        if (historyWindow != nullptr) { historyWindow->toFront (true); return; }
+        historyWindow = HistoryPanel::show (ctx);
+    });
     ctx.addAction ("clip.split", U ("Couper au curseur"), U ("Édition"), KP ('x', alt, 0), [this] { splitSelectedClip(); })->separatorBefore = true;
     ctx.findAction ("clip.split")->extraKeys.add (KP ('s'));
     ctx.addAction ("edit.cut", "Couper", U ("Édition"), KP ('x', ctrl, 0), [this]
@@ -461,6 +467,14 @@ void MainComponent::registerActions()
         setStatus (on ? U ("Mode musical activé : l'événement s'étire avec le tempo")
                       : U ("Mode musical désactivé : l'événement garde sa durée"));
         ctx.changed();
+    });
+    ctx.addAction ("audio.bounce", U ("Rendre définitif (réécrire l'événement dans un fichier)"), "Audio", {}, [this]
+    {
+        auto* w = dynamic_cast<te::WaveAudioClip*> (ctx.getSelectedClip());
+        if (w == nullptr) { setStatus (U ("Sélectionnez un événement audio")); return; }
+        juce::String err;
+        if (auto* nc = AudioEditorView::bounce (ctx, *w, err)) setStatus (U ("« ") + nc->getName() + U (" » : gain, fondus et traitements appliqués au fichier"));
+        else setStatus (U ("Rendre définitif : ") + err);
     });
     ctx.addAction ("audio.separate", U ("Séparer les sources (voix, batterie, basse, autres)…"), "Audio", KP ('u', ctrl | shift, 0),
                    [this] { stems::separateSelectedClip (ctx); })->separatorBefore = true;

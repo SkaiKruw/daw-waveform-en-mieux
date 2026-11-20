@@ -58,6 +58,9 @@ AudioEditorView::AudioEditorView (EditContext& c) : ctx (c)
         }
     };
     trimBtn.onClick = [this] { if (! trimToSelection() && ctx.setStatus) ctx.setStatus (U ("Sélectionnez d'abord une plage dans la forme d'onde")); };
+    styleButton (bounceBtn); addAndMakeVisible (bounceBtn);
+    bounceBtn.setTooltip (U ("Réécrit l'événement tel qu'il sonne (gain, fondus, inversion, transposition) dans un nouveau fichier"));
+    bounceBtn.onClick = [this] { ctx.perform ("audio.bounce"); };
     deleteBtn.onClick = [this] { if (! deleteSelection() && ctx.setStatus) ctx.setStatus (U ("Sélectionnez d'abord une plage dans la forme d'onde")); };
     fitBtn.onClick = [this] { framedClip = {}; frameClip(); repaint(); };
 
@@ -261,7 +264,58 @@ void AudioEditorView::resized()
     reverseBtn.setBounds (t.removeFromLeft (80)); t.removeFromLeft (14);
     trimBtn.setBounds (t.removeFromLeft (150)); t.removeFromLeft (4);
     deleteBtn.setBounds (t.removeFromLeft (160)); t.removeFromLeft (14);
-    fitBtn.setBounds (t.removeFromLeft (80));
+    fitBtn.setBounds (t.removeFromLeft (80)); t.removeFromLeft (14);
+    bounceBtn.setBounds (t.removeFromLeft (120));
+}
+
+te::WaveAudioClip* AudioEditorView::bounce (EditContext& ctx, te::WaveAudioClip& c, juce::String& error)
+{
+    auto& edit = c.edit;
+    auto* track = dynamic_cast<te::AudioTrack*> (c.getTrack());
+    if (track == nullptr) { error = U ("piste introuvable"); return nullptr; }
+    if (c.isMuted()) { error = U ("l'événement est muet"); return nullptr; }
+
+    // Dossier des fichiers rendus : « <projet> - Audio » si le projet est enregistré, sinon le dossier temporaire
+    // (copié à côté du projet à l'enregistrement, comme les prises).
+    const auto projectFile = edit.editFileRetriever ? edit.editFileRetriever() : juce::File();
+    const auto temp = juce::File::getSpecialLocation (juce::File::tempDirectory);
+    const auto folder = projectFile != juce::File() && ! projectFile.isAChildOf (temp)
+                          ? projectFile.getSiblingFile (projectFile.getFileNameWithoutExtension() + " - Audio")
+                          : temp.getChildFile ("onde-rendus");
+    folder.createDirectory();
+    const auto name = c.getName().upToFirstOccurrenceOf (U (" (définitif"), false, false);
+    const auto out = folder.getNonexistentChildFile (juce::File::createLegalFileName (name + " - definitif"), ".wav", false);
+
+    const auto pos = c.getPosition();
+    const double rate = edit.engine.getDeviceManager().getSampleRate() > 0 ? edit.engine.getDeviceManager().getSampleRate() : 48000.0;
+    EditContext::prepareAudioProxies (edit, 60000);
+    // Une piste muette ou hors solo rendrait du silence : rétablie le temps du rendu, hors historique.
+    const bool wasMuted = track->isMuted (false);
+    if (wasMuted) track->state.setProperty (te::IDs::mute, false, nullptr);
+    te::Renderer::Parameters p (edit);
+    p.destFile = out;
+    p.audioFormat = edit.engine.getAudioFileFormatManager().getWavFormat();
+    p.bitDepth = 32; p.sampleRateForAudio = rate; p.blockSizeForAudio = 512; p.ditheringEnabled = false;
+    p.time = { pos.getStart(), pos.getEnd() };
+    p.endAllowance = {};
+    p.usePlugins = false;                      // l'événement seul, sans inserts ni volume de la piste
+    p.tracksToDo = te::toBitSet (juce::Array<te::Track*> { track });
+    p.allowedClips.add (&c);
+    p.checkNodesForAudio = false;              // un événement silencieux se rend aussi (silence)
+    const bool ok = te::Renderer::renderToFile (U ("Rendre définitif"), p).existsAsFile();
+    if (wasMuted) track->state.setProperty (te::IDs::mute, true, nullptr);
+    if (! ok) { error = U ("le rendu a échoué"); return nullptr; }
+
+    // Remplacement : même place, même nom, réglages remis à zéro (ils sont dans le fichier).
+    edit.getUndoManager().beginNewTransaction (U ("Rendre définitif"));
+    const auto colour = c.getColour();
+    c.removeFromParent();
+    auto nc = track->insertWaveClip (name + U (" (définitif)"), out, { { pos.getStart(), pos.getEnd() }, te::TimeDuration() }, false);
+    if (nc == nullptr) { error = U ("insertion impossible"); return nullptr; }
+    nc->setColour (colour);
+    ctx.selectClip (nc.get());
+    ctx.changed();
+    return nc.get();
 }
 
 void AudioEditorView::paint (juce::Graphics& g)
