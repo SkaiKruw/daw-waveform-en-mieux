@@ -1,5 +1,6 @@
 #include "OndeEffects.h"
 #include "OndeSynth.h"
+#include "OndeFx2.h"
 
 namespace ondefx
 {
@@ -710,5 +711,8 @@ namespace ondefx
         pm.createBuiltInType<CompPlugin>();
         pm.createBuiltInType<LimiterPlugin>();
         pm.createBuiltInType<SynthPlugin>();
+        pm.createBuiltInType<SaturationPlugin>();
+        pm.createBuiltInType<EchoPlugin>();
+        pm.createBuiltInType<SpacePlugin>();
     }
 }

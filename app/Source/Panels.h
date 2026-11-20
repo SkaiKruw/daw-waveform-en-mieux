@@ -140,6 +140,9 @@ private:
     juce::Label name;
     juce::TextButton muteBtn { "M" }, soloBtn { "S" }, armBtn { U ("●") }, monBtn { U ("◉") }, readBtn { "R" }, writeBtn { "W" }, autoBtn { U ("Automation") };
     juce::TextButton instrumentBtn;
+    juce::ComboBox chainBox;                         // chaîne d'effets prête
+    juce::OwnedArray<juce::Component> quickKnobs;    // commandes rapides (macros)
+    int quickY = -1;
     juce::Slider volume, pan;
     juce::Label volLabel, panLabel;
     juce::OwnedArray<juce::TextButton> slots;

@@ -1,4 +1,7 @@
 #include "Panels.h"
+#include "Chains.h"
+#include "ParamControls.h"
+#include "LibraryPanel.h"
 
 //==============================================================================
 void IconButton::paintButton (juce::Graphics& g, bool over, bool down)
@@ -488,6 +491,22 @@ Inspector::Inspector (EditContext& c) : ctx (c)
     };
     addAndMakeVisible (instrumentBtn);
 
+    // Chaîne d'effets prête : un choix pose les effets et les commandes rapides.
+    chainBox.setTooltip (U ("Chaîne d'effets prête pour cette piste (voix, guitare, basse, batterie, master…)"));
+    chainBox.setWantsKeyboardFocus (false);
+    chainBox.onChange = [this]
+    {
+        auto* t = track();
+        if (t == nullptr || ctx.edit == nullptr) return;
+        const int id = chainBox.getSelectedId();
+        const chains::Chain* chain = id >= 2 ? &chains::all()[(size_t) (id - 2)] : nullptr;
+        if ((chain ? juce::String::fromUTF8 (chain->name) : juce::String()) == chains::currentChain (*t)) return;
+        ctx.edit->getUndoManager().beginNewTransaction (chain ? U ("Chaîne « ") + juce::String::fromUTF8 (chain->name) + U (" »") : U ("Retirer la chaîne"));
+        chains::apply (*t, chain);
+        ctx.changed();
+    };
+    addAndMakeVisible (chainBox);
+
     for (auto* s : { &volume, &pan })
     {
         s->setSliderStyle (juce::Slider::LinearHorizontal);
@@ -563,7 +582,12 @@ void Inspector::rebuild()
 {
     auto* sel = ctx.getSelectedTrack();
     juce::String sig;
-    if (sel) { sig << sel->itemID.toString(); for (auto p : sel->pluginList.getPlugins()) sig << "." << p->itemID.toString() << (p->isEnabled() ? "e" : "b"); }
+    if (sel)
+    {
+        sig << sel->itemID.toString(); for (auto p : sel->pluginList.getPlugins()) sig << "." << p->itemID.toString() << (p->isEnabled() ? "e" : "b");
+        for (auto m : chains::quickControls (*sel)) sig << "m" << m->paramID;
+        sig << "c" << chains::currentChain (*sel);
+    }
     for (auto* fx : ctx.getFxTracks()) sig << "|fx" << fx->itemID.toString() << fx->getName();
     if (sig == signature && (sel ? sel->itemID : te::EditItemID()) == trackID) { syncValues(); return; }
     detachMeters();
@@ -587,6 +611,29 @@ void Inspector::rebuild()
         auto* inst = ctx.getInstrument (*t);
         instrumentBtn.setButtonText (inst ? ((dynamic_cast<SandboxPlugin*> (inst) ? U ("◆ ") : juce::String()) + inst->getName()) : U ("Aucun instrument"));
         instrumentBtn.setTooltip (U ("Clic : ouvrir l'instrument · clic droit : changer d'instrument"));
+
+        // Commandes rapides : la chaîne choisie et les gros boutons de la piste.
+        chainBox.clear (juce::dontSendNotification);
+        chainBox.addItem (U ("Aucune chaîne"), 1);
+        juce::String lastCat;
+        for (size_t i = 0; i < chains::all().size(); ++i)
+        {
+            const auto& c = chains::all()[i];
+            const auto cat = juce::String::fromUTF8 (c.category);
+            if (cat != lastCat) { chainBox.addSectionHeading (cat); lastCat = cat; }
+            chainBox.addItem (juce::String::fromUTF8 (c.name), (int) i + 2);
+        }
+        chainBox.setSelectedId (1, juce::dontSendNotification);
+        for (size_t i = 0; i < chains::all().size(); ++i)
+            if (juce::String::fromUTF8 (chains::all()[i].name) == chains::currentChain (*t)) chainBox.setSelectedId ((int) i + 2, juce::dontSendNotification);
+        quickKnobs.clear();
+        for (auto m : chains::quickControls (*t))
+        {
+            auto* k = new ondeui::Knob (m, m->getParameterName(), theme::accent);
+            k->format = [] (float v) { return juce::String (juce::roundToInt (v * 100.0f)) + " %"; };
+            quickKnobs.add (k);
+            addAndMakeVisible (k);
+        }
 
         // Envois vers les pistes FX.
         sendSliders.clear(); sendLabels.clear(); sendBuses.clear();
@@ -686,6 +733,19 @@ void Inspector::resized()
         r.removeFromTop (8);
     }
 
+    // Commandes rapides : la chaîne, puis 4 boutons par rangée.
+    quickY = r.getY();
+    r.removeFromTop (20);
+    chainBox.setBounds (r.removeFromTop (24));
+    r.removeFromTop (4);
+    const int perRow = 4, cellW = r.getWidth() / perRow;
+    for (int i = 0; i < quickKnobs.size(); i += perRow)
+    {
+        auto row = r.removeFromTop (66);
+        for (int k = i; k < juce::jmin (i + perRow, quickKnobs.size()); ++k) quickKnobs[k]->setBounds (row.removeFromLeft (cellW));
+    }
+    r.removeFromTop (8);
+
     faderY = r.getY();
     r.removeFromTop (22);
     auto v = r.removeFromTop (22); volLabel.setBounds (v.removeFromRight (62)); v.removeFromLeft (30); volume.setBounds (v);
@@ -743,6 +803,7 @@ void Inspector::paint (juce::Graphics& g)
         g.drawText (title, r.withTrimmedLeft (20), juce::Justification::centredLeft);
     };
     if (instrumentY >= 0) section (instrumentY, "Instrument");
+    if (quickY >= 0) section (quickY, U ("Commandes rapides"));
     section (faderY, U ("Voie — ") + t->getName());
     section (insertsY, "Inserts");
     section (sendsY, EditContext::fxBusOf (*t) >= 0 ? U ("Piste FX (retour du bus ") + juce::String (EditContext::fxBusOf (*t) + 1) + ")" : U ("Envois (sends)"));

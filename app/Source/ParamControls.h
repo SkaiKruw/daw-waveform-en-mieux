@@ -31,13 +31,14 @@ namespace ondeui
             addAndMakeVisible (slider);
             startTimerHz (15);
         }
+        std::function<juce::String (float)> format;      // texte de la valeur (sinon celui du paramètre)
         void resized() override { slider.setBounds (getLocalBounds().withTrimmedTop (16).withTrimmedBottom (18)); }
         void paint (juce::Graphics& g) override
         {
             g.setColour (theme::muted); g.setFont (theme::ui (11.0f));
             g.drawText (title, getLocalBounds().removeFromTop (16), juce::Justification::centred, true);
             g.setColour (theme::text); g.setFont (theme::mono (11.0f));
-            g.drawText (param ? param->getCurrentValueAsString() : juce::String(), getLocalBounds().removeFromBottom (18), juce::Justification::centred, true);
+            g.drawText (param ? (format ? format (param->getCurrentValue()) : param->getCurrentValueAsString()) : juce::String(), getLocalBounds().removeFromBottom (18), juce::Justification::centred, true);
         }
     private:
         void timerCallback() override

@@ -6,6 +6,8 @@
 #include <JuceHeader.h>
 #include "MainComponent.h"
 #include "OndeSynth.h"
+#include "OndeFx2.h"
+#include "Chains.h"
 #include "DemoContent.h"
 #include "StudioLookAndFeel.h"
 #include "Exporter.h"
@@ -2222,6 +2224,135 @@ private:
                     }
                 }
                 if (st != nullptr) { ed.deleteTrack (st); c4.changed(); }
+            }
+
+            // Effets Onde (saturation, écho, espace) et chaînes prêtes avec commandes rapides.
+            {
+                for (auto* c : t->getClips()) c->removeFromParent();
+                for (auto* p : t->pluginList.getPlugins())
+                    if (dynamic_cast<te::VolumeAndPanPlugin*> (p) == nullptr && dynamic_cast<te::LevelMeterPlugin*> (p) == nullptr) p->deleteFromParent();
+                t->insertWaveClip ("fort", loud, { { te::TimePosition(), te::TimePosition::fromSeconds (4.0) }, te::TimeDuration() }, false);
+                auto addFx = [&] (const char* type) { auto p = ed.getPluginCache().createNewPlugin (type, {}); t->pluginList.insertPlugin (p, 0, nullptr); return p; };
+
+                // Saturation : harmonique 3 (caractère doux, impair) et 2 (lampe, pair) sur un 1 kHz à -6 dBFS.
+                auto satPtr = addFx (ondefx::SaturationPlugin::xmlTypeName);
+                auto* sat = dynamic_cast<ondefx::SaturationPlugin*> (satPtr.get());
+                sat->param ("drive")->setParameter (0.0f, juce::sendNotification);
+                sat->param ("character")->setParameter (0.0f, juce::sendNotification);
+                const auto clean = renderTrack ("saturation-0");
+                sat->param ("drive")->setParameter (24.0f, juce::sendNotification);
+                const auto hot = renderTrack ("saturation-douce");
+                sat->param ("character")->setParameter (1.0f, juce::sendNotification);
+                const auto tube = renderTrack ("saturation-lampe");
+                const double h3clean = toneDb (clean, 48000, 3000) - toneDb (clean, 48000, 1000);
+                const double h3 = toneDb (hot, 48000, 3000) - toneDb (hot, 48000, 1000);
+                const double h2tube = toneDb (tube, 48000, 2000) - toneDb (tube, 48000, 1000), h2soft = toneDb (hot, 48000, 2000) - toneDb (hot, 48000, 1000);
+                const float peakHot = peakDb (hot);
+                check (h3 > h3clean + 15.0 && h2tube > -35.0 && h2soft < -60.0 && peakHot < 0.0f,
+                       U ("Onde Saturation : harmonique 3 ") + juce::String (h3clean, 1) + U (" dB à 0 dB, ") + juce::String (h3, 1)
+                       + U (" dB à +24 dB ; harmonique 2 : douce ") + juce::String (juce::jmax (-120.0, h2soft), 0) + U (" dB, lampe ") + juce::String (h2tube, 1) + U (" dB ; crête ") + juce::String (peakHot, 1) + " dBFS");
+                if (auto e = ondefx::createEditor (*sat)) { pump (200); snapshot (*e, dir.getChildFile ("20-onde-saturation.png")); }
+                satPtr->deleteFromParent();
+
+                // Écho et espace sur un clic isolé à 0,5 s.
+                const auto click = dir.getChildFile ("clic.wav");
+                {
+                    juce::AudioBuffer<float> b (2, len); b.clear();
+                    b.setSample (0, 24000, 0.8f); b.setSample (1, 24000, 0.8f);
+                    click.deleteFile();
+                    std::unique_ptr<juce::OutputStream> os (click.createOutputStream());
+                    if (auto w = std::unique_ptr<juce::AudioFormatWriter> (juce::WavAudioFormat().createWriterFor (os.get(), fs, 2, 32, {}, 0))) { os.release(); w->writeFromAudioSampleBuffer (b, 0, len); }
+                }
+                for (auto* c : t->getClips()) c->removeFromParent();
+                t->insertWaveClip ("clic", click, { { te::TimePosition(), te::TimePosition::fromSeconds (4.0) }, te::TimeDuration() }, false);
+                auto echoPtr = addFx (ondefx::EchoPlugin::xmlTypeName);
+                auto* echo = dynamic_cast<ondefx::OndeEffect*> (echoPtr.get());
+                echo->param ("division")->setParameter (1.0f, juce::sendNotification);      // noire
+                echo->param ("feedback")->setParameter (0.0f, juce::sendNotification);
+                echo->param ("mix")->setParameter (50.0f, juce::sendNotification);
+                const auto echoed = renderTrack ("echo");
+                const double bpm = ed.tempoSequence.getTempos()[0]->getBpm();
+                int peakAt = -1; float peakV = 0;
+                for (int i = 24000 + 2400; i < echoed.getNumSamples(); ++i) if (std::abs (echoed.getSample (0, i)) > peakV) { peakV = std::abs (echoed.getSample (0, i)); peakAt = i; }
+                const double delayMs = (peakAt - 24000) / 48.0, expectMs = 60000.0 / bpm;
+                check (std::abs (delayMs - expectMs) < 1.0 && peakV > 0.3f,
+                       U ("Onde Écho : noire à ") + juce::String (bpm, 0) + U (" BPM → répétition à ") + juce::String (delayMs, 1) + U (" ms (attendu ") + juce::String (expectMs, 1) + " ms)");
+                echoPtr->deleteFromParent();
+
+                auto spacePtr = addFx (ondefx::SpacePlugin::xmlTypeName);
+                auto* space = dynamic_cast<ondefx::OndeEffect*> (spacePtr.get());
+                space->param ("decay")->setParameter (2.0f, juce::sendNotification);
+                space->param ("mix")->setParameter (100.0f, juce::sendNotification);
+                space->param ("predelay")->setParameter (0.0f, juce::sendNotification);
+                const auto tail = renderTrack ("espace");
+                auto energyDb = [&] (double from, double to)
+                {
+                    double e = 0; const int a = 24000 + (int) (from * 48000), b = 24000 + (int) (to * 48000);
+                    for (int i = a; i < juce::jmin (b, tail.getNumSamples()); ++i) e += tail.getSample (0, i) * tail.getSample (0, i) + tail.getSample (1, i) * tail.getSample (1, i);
+                    return 10.0 * std::log10 (e / juce::jmax (1, b - a) + 1.0e-20);
+                };
+                const double slope = (energyDb (1.1, 1.3) - energyDb (0.2, 0.4)) / 0.9;          // dB par seconde
+                const double rt60 = -60.0 / slope;
+                double corr = 0, el = 0, er = 0;
+                for (int i = 24000 + 4800; i < 24000 + 48000; ++i) { const double l = tail.getSample (0, i), r = tail.getSample (1, i); corr += l * r; el += l * l; er += r * r; }
+                corr /= std::sqrt (el * er + 1.0e-20);
+                check (rt60 > 1.4 && rt60 < 2.8 && std::abs (corr) < 0.5,
+                       U ("Onde Espace : durée réglée 2 s → mesurée ") + juce::String (rt60, 2) + U (" s ; corrélation gauche/droite ") + juce::String (corr, 2) + U (" (stéréo large)"));
+                spacePtr->deleteFromParent();
+
+                // Chaînes prêtes : pose, remplacement, annulation ; une commande rapide change le son ; enregistrement.
+                for (auto* c : t->getClips()) c->removeFromParent();
+                t->insertWaveClip ("fort", loud, { { te::TimePosition(), te::TimePosition::fromSeconds (4.0) }, te::TimeDuration() }, false);
+                auto chainCount = [&] { int n2 = 0; for (auto* p : t->pluginList) if (p->state.hasProperty ("ondeChain")) ++n2; return n2; };
+                auto& um = ed.getUndoManager();
+                um.beginNewTransaction (U ("Chaîne « Voix pop »"));
+                chains::apply (*t, chains::find (U ("Voix pop")));
+                const int popFx = chainCount(), popMacros = chains::quickControls (*t).size();
+                um.beginNewTransaction (U ("Chaîne « Podcast »"));
+                chains::apply (*t, chains::find ("Podcast"));
+                const int podFx = chainCount();
+                um.undo();
+                pump (200);
+                const bool backToPop = chains::currentChain (*t) == U ("Voix pop") && chainCount() == popFx;
+                check (popFx == 4 && popMacros == 5 && podFx == 3 && backToPop,
+                       U ("chaînes : « Voix pop » pose ") + juce::String (popFx) + U (" effets et ") + juce::String (popMacros) + U (" commandes rapides, « Podcast » la remplace (")
+                       + juce::String (podFx) + U (" effets), annuler revient à « Voix pop » (") + juce::String (backToPop ? "oui" : "non") + ")");
+
+                um.beginNewTransaction (U ("Chaîne « Guitare saturée »"));
+                chains::apply (*t, chains::find (U ("Guitare saturée")));
+                te::MacroParameter* drive = nullptr;
+                for (auto m : chains::quickControls (*t)) if (m->getParameterName() == "Saturation") drive = m;
+                double h3lo = 0, h3hi = 0;
+                if (drive != nullptr)
+                {
+                    drive->setParameter (0.0f, juce::sendNotification);
+                    const auto lo = renderTrack ("commande-saturation-0");
+                    drive->setParameter (1.0f, juce::sendNotification);
+                    const auto hi = renderTrack ("commande-saturation-100");
+                    h3lo = toneDb (lo, 48000, 3000) - toneDb (lo, 48000, 1000);
+                    h3hi = toneDb (hi, 48000, 3000) - toneDb (hi, 48000, 1000);
+                    drive->setParameter (0.8f, juce::sendNotification);
+                }
+                bool chainKept = false;
+                const auto savedChain = dir.getChildFile ("chaine.onde");
+                if (mc->saveProjectTo (savedChain))
+                    if (auto reopened = MainComponent::loadProject (*engine, savedChain))
+                    {
+                        for (auto* rt : te::getAudioTracks (*reopened))
+                            if (chains::currentChain (*rt) == U ("Guitare saturée"))
+                                for (auto m : chains::quickControls (*rt))
+                                    if (m->getParameterName() == "Saturation" && std::abs (m->getCurrentValue() - 0.8f) < 0.01f) chainKept = true;
+                        EditContext::destroyEdit (reopened);
+                    }
+                check (drive != nullptr && h3hi > h3lo + 3.0 && chainKept,
+                       U ("commande rapide « Saturation » : harmonique 3 à ") + juce::String (h3lo, 1) + U (" dB (0 %) puis ") + juce::String (h3hi, 1)
+                       + U (" dB (100 %) ; chaîne et réglage retrouvés après réouverture (") + juce::String (chainKept ? "oui" : "non") + ")");
+                c4.selectTrack (t);
+                c4.changed();
+                pump (400);
+                snapshot (*mc, dir.getChildFile ("21-commandes-rapides.png"));
+                um.beginNewTransaction ("Retirer");
+                chains::apply (*t, nullptr);
             }
         }
 

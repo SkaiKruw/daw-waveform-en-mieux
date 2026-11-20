@@ -1,5 +1,6 @@
 #include "LibraryPanel.h"
 #include "OndeSynth.h"
+#include "Chains.h"
 
 namespace
 {
@@ -106,6 +107,7 @@ te::AudioTrack* LibraryPanel::applyToTrack (EditContext& c, te::AudioTrack* t, c
     if (synth == nullptr || t == nullptr) return t;
     const auto oldPreset = synth->getPresetName();
     synth->applyPreset (preset);
+    chains::rebuildMacros (*t);                    // commandes rapides de l'instrument (selon son moteur)
     // Une piste qui portait le nom de l'ancien son (ou « Onde Synth ») prend le nom du nouveau.
     if (t->getName() == oldPreset || t->getName() == "Onde Synth" || t->getName().startsWith ("Instrument"))
         t->setName (juce::String::fromUTF8 (preset.name));

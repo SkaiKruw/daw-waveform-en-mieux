@@ -1,6 +1,7 @@
 #include "PluginCatalog.h"
 #include "OndeEffects.h"
 #include "OndeSynth.h"
+#include "OndeFx2.h"
 #include "SandboxPlugin.h"
 
 PluginCatalog::PluginCatalog() : juce::Thread ("Analyse des plugins")
@@ -33,6 +34,9 @@ juce::Array<PluginEntry> PluginCatalog::getBuiltIns (bool instruments) const
         add ("Onde EQ (égaliseur paramétrique, analyseur)", ondefx::EqPlugin::xmlTypeName, false);       r.getReference (r.size() - 1).manufacturer = "Onde";
         add ("Onde Comp (compresseur)", ondefx::CompPlugin::xmlTypeName, false);                         r.getReference (r.size() - 1).manufacturer = "Onde";
         add ("Onde Limiteur (plafond garanti)", ondefx::LimiterPlugin::xmlTypeName, false);              r.getReference (r.size() - 1).manufacturer = "Onde";
+        add ("Onde Saturation (douce, lampe, bande, fuzz)", ondefx::SaturationPlugin::xmlTypeName, false); r.getReference (r.size() - 1).manufacturer = "Onde";
+        add ("Onde Écho (délai calé sur le tempo)", ondefx::EchoPlugin::xmlTypeName, false);              r.getReference (r.size() - 1).manufacturer = "Onde";
+        add ("Onde Espace (réverbération)", ondefx::SpacePlugin::xmlTypeName, false);                    r.getReference (r.size() - 1).manufacturer = "Onde";
         add ("Égaliseur 4 bandes", te::EqualiserPlugin::xmlTypeName, false);
         add ("Compresseur", te::CompressorPlugin::xmlTypeName, false);
         add ("Réverbération", te::ReverbPlugin::xmlTypeName, false);
