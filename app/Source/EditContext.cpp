@@ -1,5 +1,6 @@
 #include "EditContext.h"
 #include "OndeSynth.h"
+#include "OndeFx2.h"
 
 juce::String Action::keyText() const
 {
@@ -278,8 +279,10 @@ te::AudioTrack* EditContext::addFxTrack (const PluginEntry* effect)
     t->pluginList.insertPlugin (ret, 0, nullptr);
     PluginEntry e;
     if (effect != nullptr) e = *effect;
-    else for (auto& b : catalog.getBuiltIns (false)) if (b.builtInType == te::ReverbPlugin::xmlTypeName) e = b;
+    else for (auto& b : catalog.getBuiltIns (false)) if (b.builtInType == ondefx::SpacePlugin::xmlTypeName) e = b;   // Onde Espace
     if (e.name.isNotEmpty()) PluginCatalog::addToTrack (*t, e);
+    // Bus de retour : la réverbération y est entièrement « mouillée » (le son direct reste sur les pistes).
+    for (auto* p : t->pluginList) if (auto* sp = dynamic_cast<ondefx::SpacePlugin*> (p)) sp->setStored ("mix", 100.0f);
     t->setName ("FX " + juce::String (bus + 1) + U (" — ") + e.name.upToFirstOccurrenceOf (" (", false, false));
     t->setColour (juce::Colour (0xff8a7ad8));
     selectTrack (t.get());

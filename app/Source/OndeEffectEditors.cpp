@@ -472,3 +472,63 @@ namespace ondefx
         return {};
     }
 }
+
+namespace ondefx
+{
+    namespace
+    {
+        // Fenêtre générique : en-tête Onde, puis un bouton rotatif par paramètre (6 par rangée, défilement au-delà).
+        class GenericEditor  : public juce::Component
+        {
+        public:
+            explicit GenericEditor (te::Plugin& p) : plugin (p)
+            {
+                const juce::Colour accent (0xff3fa4ff);
+                for (auto* prm : p.getAutomatableParameters())
+                {
+                    auto* k = new ondeui::Knob (prm, prm->getParameterName(), accent);
+                    knobs.add (k);
+                    content.addAndMakeVisible (k);
+                }
+                viewport.setViewedComponent (&content, false);
+                viewport.setScrollBarsShown (true, false);
+                addAndMakeVisible (viewport);
+                const int rows = juce::jmax (1, (knobs.size() + 5) / 6);
+                setSize (6 * 104 + 32, 60 + juce::jmin (4, rows) * 104 + 20);
+            }
+            void paint (juce::Graphics& g) override
+            {
+                g.setGradientFill (juce::ColourGradient (juce::Colour (0xff23272e), 0, 0, juce::Colour (0xff15171b), 0, (float) getHeight(), false));
+                g.fillAll();
+                auto r = getLocalBounds().removeFromTop (44).reduced (12, 6);
+                theme::drawLogo (g, r.removeFromLeft (r.getHeight()).toFloat().reduced (4.0f));
+                r.removeFromLeft (8);
+                g.setColour (theme::text); g.setFont (theme::ui (16.0f, true));
+                g.drawText (plugin.getName(), r.removeFromLeft (260), juce::Justification::centredLeft);
+                g.setColour (theme::muted); g.setFont (theme::ui (12.0f));
+                g.drawText (juce::String (knobs.size()) + juce::String::fromUTF8 (" réglages · automatisables et modulables · double-clic : valeur d'origine"),
+                            r, juce::Justification::centredLeft, true);
+                if (knobs.isEmpty())
+                {
+                    g.setColour (theme::muted);
+                    g.drawText (juce::String::fromUTF8 ("Cet effet n'a pas de réglage."), getLocalBounds().withTrimmedTop (44), juce::Justification::centred);
+                }
+            }
+            void resized() override
+            {
+                viewport.setBounds (getLocalBounds().withTrimmedTop (52).reduced (12, 6));
+                const int w = viewport.getWidth() - viewport.getScrollBarThickness();
+                for (int i = 0; i < knobs.size(); ++i) knobs[i]->setBounds ((i % 6) * 104, (i / 6) * 104, 100, 100);
+                content.setSize (w, ((knobs.size() + 5) / 6) * 104);
+            }
+        private:
+            te::Plugin& plugin;
+            te::Plugin::Ptr keepAlive { &plugin };
+            juce::Viewport viewport;
+            juce::Component content;
+            juce::OwnedArray<ondeui::Knob> knobs;
+        };
+    }
+
+    std::unique_ptr<juce::Component> createGenericEditor (te::Plugin& p) { return std::make_unique<GenericEditor> (p); }
+}

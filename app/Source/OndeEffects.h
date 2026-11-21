@@ -220,4 +220,6 @@ namespace ondefx
     // Enregistrement des types auprès du moteur, et fenêtre de réglage dédiée (nullptr si pas un effet Onde).
     void registerTypes (te::Engine&);
     std::unique_ptr<juce::Component> createEditor (te::Plugin&);
+    // Fenêtre générique soignée (boutons rotatifs, en-tête Onde) pour tout plugin sans fenêtre dédiée.
+    std::unique_ptr<juce::Component> createGenericEditor (te::Plugin&);
 }

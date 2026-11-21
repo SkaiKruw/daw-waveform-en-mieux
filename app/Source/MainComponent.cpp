@@ -1092,8 +1092,11 @@ void MainComponent::openPluginEditor (te::Plugin& p, juce::Component* target)
         slot = ondeui::showToolWindow (o.dialogTitle, o.content.release(), o.resizable, o.dialogBackgroundColour);   // flottante : lecture et sélection restent possibles
         return;
     }
-    auto ed = std::make_unique<ParamEditor> (p);
-    juce::CallOutBox::launchAsynchronously (std::move (ed), target != nullptr ? target->getScreenBounds() : getScreenBounds().withSizeKeepingCentre (10, 10), nullptr);
+    // Autres effets et instruments (Tracktion) : fenêtre flottante soignée, une seule par plugin.
+    auto& slot = effectWindows[p.itemID.toString()];
+    if (slot != nullptr) { slot->toFront (true); return; }
+    auto* track = p.getOwnerTrack();
+    slot = ondeui::showToolWindow (p.getName() + (track != nullptr ? U (" — ") + track->getName() : juce::String()), ondefx::createGenericEditor (p).release(), false, juce::Colour (0xff17191d));
 }
 
 //==============================================================================

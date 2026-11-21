@@ -1126,9 +1126,9 @@ private:
         // Effets intégrés + VST3 isolé ajoutés à une piste.
         ctx.selectTrack (inst);
         PluginEntry rev;
-        for (auto& e : catalog->getBuiltIns (false)) if (e.builtInType == te::ReverbPlugin::xmlTypeName) rev = e;
+        for (auto& e : catalog->getBuiltIns (false)) if (e.builtInType == ondefx::SpacePlugin::xmlTypeName) rev = e;
         PluginCatalog::addToTrack (*inst, rev);
-        bool hasReverb = false; for (auto p : inst->pluginList.getPlugins()) hasReverb |= dynamic_cast<te::ReverbPlugin*> (p) != nullptr;
+        bool hasReverb = false; for (auto p : inst->pluginList.getPlugins()) hasReverb |= dynamic_cast<ondefx::SpacePlugin*> (p) != nullptr;
         check (hasReverb, U ("un effet intégré (réverbération) s'ajoute avant le volume"));
         const PluginEntry* crashFx = nullptr;
         for (auto& e : effects) if (e.name == "Onde Test Crash") crashFx = &e;

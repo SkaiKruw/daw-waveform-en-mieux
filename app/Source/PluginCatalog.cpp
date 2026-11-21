@@ -30,20 +30,18 @@ juce::Array<PluginEntry> PluginCatalog::getBuiltIns (bool instruments) const
     }
     else
     {
-        // Effets Onde (fenêtres dédiées), puis effets de base de Tracktion.
+        // Effets Onde (fenêtres dédiées), puis effets de base de Tracktion sans équivalent Onde (égaliseur,
+        // compresseur, réverbération et délai de base sont remplacés par Onde EQ, Comp, Espace, Écho ; les
+        // anciens projets qui les utilisent s'ouvrent toujours).
         add ("Onde EQ (égaliseur paramétrique, analyseur)", ondefx::EqPlugin::xmlTypeName, false);       r.getReference (r.size() - 1).manufacturer = "Onde";
         add ("Onde Comp (compresseur)", ondefx::CompPlugin::xmlTypeName, false);                         r.getReference (r.size() - 1).manufacturer = "Onde";
         add ("Onde Limiteur (plafond garanti)", ondefx::LimiterPlugin::xmlTypeName, false);              r.getReference (r.size() - 1).manufacturer = "Onde";
         add ("Onde Saturation (douce, lampe, bande, fuzz)", ondefx::SaturationPlugin::xmlTypeName, false); r.getReference (r.size() - 1).manufacturer = "Onde";
         add ("Onde Écho (délai calé sur le tempo)", ondefx::EchoPlugin::xmlTypeName, false);              r.getReference (r.size() - 1).manufacturer = "Onde";
         add ("Onde Espace (réverbération)", ondefx::SpacePlugin::xmlTypeName, false);                    r.getReference (r.size() - 1).manufacturer = "Onde";
-        add ("Égaliseur 4 bandes", te::EqualiserPlugin::xmlTypeName, false);
-        add ("Compresseur", te::CompressorPlugin::xmlTypeName, false);
-        add ("Réverbération", te::ReverbPlugin::xmlTypeName, false);
-        add ("Délai", te::DelayPlugin::xmlTypeName, false);
-        add ("Chorus", te::ChorusPlugin::xmlTypeName, false);
-        add ("Phaser", te::PhaserPlugin::xmlTypeName, false);
-        add ("Passe-bas", te::LowPassPlugin::xmlTypeName, false);
+        add ("Chorus (Tracktion)", te::ChorusPlugin::xmlTypeName, false);
+        add ("Phaser (Tracktion)", te::PhaserPlugin::xmlTypeName, false);
+        add ("Passe-bas (Tracktion)", te::LowPassPlugin::xmlTypeName, false);
     }
     return r;
 }
