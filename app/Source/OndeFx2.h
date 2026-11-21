@@ -23,6 +23,7 @@ namespace ondefx
         void applyToBuffer (const te::PluginRenderContext&) override;
         static float shape (int character, float x) noexcept;     // courbe de transfert (aussi pour l'affichage)
         static constexpr const char* characterNames[4] = { "Douce", "Lampe", "Bande", "Fuzz" };
+        std::atomic<float> inputDb { -100.0f }, outputDb { -100.0f };       // crêtes du dernier bloc (fenêtre)
     private:
         double rate = 48000.0;
         std::unique_ptr<juce::dsp::Oversampling<float>> oversampling;

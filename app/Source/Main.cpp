@@ -2329,6 +2329,7 @@ private:
                 const double delayMs = (peakAt - 24000) / 48.0, expectMs = 60000.0 / bpm;
                 check (std::abs (delayMs - expectMs) < 1.0 && peakV > 0.3f,
                        U ("Onde Écho : noire à ") + juce::String (bpm, 0) + U (" BPM → répétition à ") + juce::String (delayMs, 1) + U (" ms (attendu ") + juce::String (expectMs, 1) + " ms)");
+                if (auto e = ondefx::createEditor (*echoPtr)) { echo->setStored ("pingpong", 1.0f); echo->setStored ("feedback", 50.0f); pump (300); snapshot (*e, dir.getChildFile ("27-onde-echo.png")); }
                 echoPtr->deleteFromParent();
 
                 auto spacePtr = addFx (ondefx::SpacePlugin::xmlTypeName);
@@ -2350,6 +2351,7 @@ private:
                 corr /= std::sqrt (el * er + 1.0e-20);
                 check (rt60 > 1.4 && rt60 < 2.8 && std::abs (corr) < 0.5,
                        U ("Onde Espace : durée réglée 2 s → mesurée ") + juce::String (rt60, 2) + U (" s ; corrélation gauche/droite ") + juce::String (corr, 2) + U (" (stéréo large)"));
+                if (auto e = ondefx::createEditor (*spacePtr)) { space->setStored ("mix", 25.0f); pump (300); snapshot (*e, dir.getChildFile ("28-onde-espace.png")); }
                 spacePtr->deleteFromParent();
 
                 // Chaînes prêtes : pose, remplacement, annulation ; une commande rapide change le son ; enregistrement.
