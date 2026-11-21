@@ -2479,6 +2479,25 @@ private:
                 check (region != nullptr && panel != nullptr && panelWindow != nullptr && ! panelWindow->isCurrentlyModal() && clapAfter && popBack && sounds,
                        U ("piste « Batteur » : région créée, fenêtre flottante (non modale), style Électro → claps, annuler → Pop, son au rendu (")
                        + juce::String (sounds ? "oui" : "non") + ")");
+                // Mode de la région changeable à tout moment : notes modifiables (une retouche reste, les réglages
+                // ne refont pas le jeu), puis retour en automatique (le jeu est refait).
+                bool manualKept = false, autoBack = false;
+                if (region != nullptr && panel != nullptr)
+                {
+                    auto& um = ed.getUndoManager();
+                    um.beginNewTransaction ("Notes modifiables");
+                    drummer::setAutomatic (*region, false);
+                    auto& seq = region->getSequence();
+                    if (auto* firstNote = seq.getNotes().getFirst()) seq.removeNote (*firstNote, &um);      // une retouche
+                    const int edited = seq.getNumNotes();
+                    pump (300);
+                    panel->setStyle (2);                                                                     // sans effet en notes modifiables
+                    manualKept = ! drummer::isAutomatic (region) && seq.getNumNotes() == edited && drummer::isDrummerRegion (region);
+                    um.beginNewTransaction ("Automatique");
+                    drummer::setAutomatic (*region, true);
+                    autoBack = drummer::isAutomatic (region) && seq.getNumNotes() != edited;
+                }
+                check (manualKept && autoBack, U ("batteur : passage en notes modifiables (la retouche reste, les réglages ne refont rien) puis retour en automatique (jeu refait)"));
                 if (panelWindow != nullptr) delete panelWindow;
 
                 // Nouvelle piste : voix (chaîne « Voix pop »), instrument (Onde Synth, bibliothèque ouverte, non modale).

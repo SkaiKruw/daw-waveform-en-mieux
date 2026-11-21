@@ -21,7 +21,11 @@ namespace drummer
     extern const char* const styleNames[numStyles];
     extern const char* const styleDescriptions[numStyles];
 
-    bool isDrummerRegion (const te::Clip*);
+    bool isDrummerRegion (const te::Clip*);         // région de batteur (automatique ou passée en notes modifiables)
+    bool isAutomatic (const te::Clip*);              // le jeu est regénéré par les réglages
+    // Automatique : le jeu suit les réglages (regénéré tout de suite). Notes modifiables : les notes actuelles
+    // restent, on les retouche dans l'éditeur de notes ; repasser en automatique remplace ces retouches.
+    void setAutomatic (te::MidiClip&, bool automatic);
     Settings read (const te::MidiClip&);
     // Écrit les réglages dans la région et regénère ses notes (annulable : transaction de l'appelant).
     void apply (te::MidiClip&, const Settings&);

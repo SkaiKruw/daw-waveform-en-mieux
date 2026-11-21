@@ -1,4 +1,5 @@
 #include "ArrangementView.h"
+#include "Drummer.h"
 
 namespace
 {
@@ -403,7 +404,11 @@ public:
         auto title = c.removeFromTop (juce::jmin (15.0f, c.getHeight() * 0.3f));
         g.setColour (base.withMultipliedBrightness (sel ? 1.15f : 0.9f).withAlpha (a)); g.fillRect (title);
         g.setColour (juce::Colour (0xff0e0f11).withAlpha (a)); g.setFont (theme::ui (11.0f, true));
-        g.drawText ((muted ? U ("[muet] ") : juce::String()) + clip.getName(), title.reduced (4.0f, 0.0f), juce::Justification::centredLeft, true);
+        juce::String title2 = (muted ? U ("[muet] ") : juce::String()) + clip.getName();
+        if (drummer::isDrummerRegion (&clip))      // style du batteur, ou « notes modifiables »
+            if (auto* mc2 = dynamic_cast<te::MidiClip*> (&clip))
+                title2 << U (" · ") << (drummer::isAutomatic (&clip) ? juce::String::fromUTF8 (drummer::styleNames[drummer::read (*mc2).style]) + U (" (double-clic : réglages)") : U ("notes modifiables"));
+        g.drawText (title2, title.reduced (4.0f, 0.0f), juce::Justification::centredLeft, true);
 
         auto inner = c.reduced (2.0f, 2.0f);
         const auto ink = juce::Colour (0xff0b0c0e).withAlpha ((muted ? 0.35f : 0.72f) * a);
@@ -759,6 +764,8 @@ public:
         if (e.mods.isShiftDown()) { ctx.toggleClipSelection (clip); return; }
         if (! ctx.isClipSelected (*clip)) ctx.selectClip (clip);
         else { ctx.selectedClipID = clip->itemID; ctx.changed(); }
+        // Double-clic : réglages du batteur (région automatique), sinon l'éditeur de notes ou audio.
+        if (e.getNumberOfClicks() == 2 && drummer::isAutomatic (clip)) { ctx.selectClip (clip); ctx.perform ("midi.drummer"); return; }
         if (e.getNumberOfClicks() == 2) { if (ctx.showView) ctx.showView (dynamic_cast<te::MidiClip*> (clip) != nullptr ? 2 : 3); return; }
 
         if (const int handle = audioHandleAt (clip, e.getPosition()))
@@ -969,7 +976,17 @@ public:
         m.addSubMenu ("Outils", tools);
         m.addSeparator();
         const bool midi = dynamic_cast<te::MidiClip*> (&clip) != nullptr;
-        if (midi) { m.addItem (1, U ("Ouvrir l'éditeur de notes  (Ctrl+E)")); m.addItem (2, U ("Quantifier  (Q)")); m.addSeparator(); }
+        if (drummer::isDrummerRegion (&clip))
+        {
+            // Région de batteur : ses réglages, et le choix automatique / notes modifiables à tout moment.
+            const bool automatic = drummer::isAutomatic (&clip);
+            m.addItem (20, U ("Réglages du batteur (style, jeu, remplissages)…"), automatic);
+            m.addItem (21, U ("Batteur automatique (le jeu suit les réglages)"), true, automatic);
+            m.addItem (22, U ("Notes modifiables (retoucher dans l'éditeur de notes)"), true, ! automatic);
+            m.addItem (1, U ("Ouvrir l'éditeur de notes  (Ctrl+E)"));
+            m.addSeparator();
+        }
+        else if (midi) { m.addItem (1, U ("Ouvrir l'éditeur de notes  (Ctrl+E)")); m.addItem (2, U ("Quantifier  (Q)")); m.addSeparator(); }
         else
         {
             m.addItem (9, U ("Ouvrir l'éditeur audio  (Ctrl+E)"));
@@ -985,9 +1002,22 @@ public:
         m.addItem (7, U ("Délimiteurs sur l'événement  (P)"));
         m.addSeparator();
         m.addItem (8, U ("Supprimer  (Suppr)"));
-        m.showMenuAsync ({}, [this] (int r)
+        const auto clipID = clip.itemID;
+        m.showMenuAsync ({}, [this, clipID] (int r)
         {
             if (r >= 100) { ctx.setTool ((Tool) (r - 100)); return; }
+            if (r >= 20 && r <= 22)
+            {
+                auto* c = dynamic_cast<te::MidiClip*> (te::findClipForID (*ctx.edit, clipID));
+                if (c == nullptr) return;
+                ctx.selectClip (c);
+                if (r == 20) { ctx.perform ("midi.drummer"); return; }
+                ctx.edit->getUndoManager().beginNewTransaction (r == 21 ? U ("Batteur automatique") : U ("Batteur : notes modifiables"));
+                drummer::setAutomatic (*c, r == 21);
+                if (r == 22 && ctx.showView) ctx.showView (2);
+                ctx.changed();
+                return;
+            }
             const char* ids[] = { "", "midi.editor", "clip.quantise", "clip.split", "clip.glue", "clip.duplicate", "clip.mute", "transport.locators", "clip.delete",
                                   "midi.editor", "audio.separate", "audio.musical" };
             if (r > 0 && r < 12) ctx.perform (ids[r]);

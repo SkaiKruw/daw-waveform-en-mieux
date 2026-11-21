@@ -32,5 +32,6 @@ private:
     juce::ComboBox fills;
     juce::ToggleButton kick { "Grosse caisse" }, snare { "Caisse claire" }, cymbals { "Cymbales" }, percussion { "Percussions" };
     juce::TextButton variation { "Nouvelle variation" }, addDrummer { "Ajouter un batteur" };
+    juce::TextButton autoBtn { "Automatique" }, manualBtn { "Notes modifiables" };   // mode de la région, changeable à tout moment
     juce::Label info;
 };

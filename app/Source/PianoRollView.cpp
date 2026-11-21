@@ -1,4 +1,5 @@
 #include "PianoRollView.h"
+#include "Drummer.h"
 
 namespace
 {
@@ -357,7 +358,9 @@ void PianoRollView::mouseDown (const juce::MouseEvent& e)
         if (e.mods.isShiftDown()) { mode = controllerLine; lineStart = lineEnd = e.position; repaint(); return; }
         mode = controller; lastDrawBeat = -1.0; mouseDrag (e); return;
     }
-    if (e.y > getHeight() - velH && e.x > keysW) { um->beginNewTransaction (U ("Vélocité")); mode = velocity; mouseDrag (e); return; }
+    // Retoucher les notes d'une région de batteur automatique la passe en « notes modifiables » (rien n'est écrasé ensuite).
+    auto keepEdits = [mc] { if (drummer::isAutomatic (mc)) drummer::setAutomatic (*mc, false); };
+    if (e.y > getHeight() - velH && e.x > keysW) { um->beginNewTransaction (U ("Vélocité")); keepEdits(); mode = velocity; mouseDrag (e); return; }
     if (e.y > toolbarH && e.y < toolbarH + rulerH && e.x > keysW)
     {
         ctx.edit->getTransport().setPosition (mc->getTimeOfContentBeat (te::BeatPosition::fromBeats (juce::jmax (0.0, xToBeat ((float) e.x)))));
@@ -370,6 +373,7 @@ void PianoRollView::mouseDown (const juce::MouseEvent& e)
     if (ctx.tool == Tool::erase || (n != nullptr && (e.mods.isPopupMenu() || e.getNumberOfClicks() == 2)))
     {
         um->beginNewTransaction (U ("Effacer des notes"));
+        keepEdits();
         mode = erase;
         if (n) { selected.removeFirstMatchingValue (n); seq.removeNote (*n, um); }
         dragNote = nullptr;
@@ -386,6 +390,7 @@ void PianoRollView::mouseDown (const juce::MouseEvent& e)
         return;
     }
     um->beginNewTransaction (U ("Modifier les notes"));
+    keepEdits();
     if (create)
     {
         int pitch = yToPitch (e.y);

@@ -71,6 +71,17 @@ namespace drummer
         return dynamic_cast<const te::MidiClip*> (c) != nullptr && c->state.hasProperty (regionID);
     }
 
+    namespace { const juce::Identifier manualID ("ondeDrummerManual"); }
+
+    bool isAutomatic (const te::Clip* c) { return isDrummerRegion (c) && ! c->state.getProperty (manualID, false); }
+
+    void setAutomatic (te::MidiClip& clip, bool automatic)
+    {
+        auto* um = &clip.edit.getUndoManager();
+        if (automatic) { clip.state.removeProperty (manualID, um); apply (clip, read (clip)); }
+        else clip.state.setProperty (manualID, true, um);
+    }
+
     Settings read (const te::MidiClip& c) { return decode (c.state[regionID].toString()); }
 
     std::vector<Hit> generate (const Settings& s, int bars, int beatsPerBar)

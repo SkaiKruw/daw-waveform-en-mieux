@@ -92,6 +92,28 @@ DrummerPanel::DrummerPanel (EditContext& c) : ctx (c)
         if (auto* clip = drummer::addDrummerTrack (ctx)) { ctx.selectClip (clip); syncFromRegion(); }
     };
     addAndMakeVisible (addDrummer);
+    // Mode de la région : automatique (suit les réglages) ou notes modifiables (on les retouche à la main).
+    for (auto* b : { &autoBtn, &manualBtn })
+    {
+        b->setClickingTogglesState (false);
+        b->setColour (juce::TextButton::buttonOnColourId, juce::Colour (0xffe08a3c));
+        b->setColour (juce::TextButton::textColourOnId, juce::Colours::black);
+        addAndMakeVisible (*b);
+    }
+    autoBtn.setTooltip (U ("Le jeu suit les réglages : chaque changement le regénère (vos retouches de notes sont remplacées)"));
+    manualBtn.setTooltip (U ("Les notes actuelles restent : retouchez-les dans l'éditeur de notes ; vous pouvez revenir en automatique à tout moment"));
+    auto setMode = [this] (bool automatic)
+    {
+        auto* r = region();
+        if (r == nullptr || drummer::isAutomatic (r) == automatic) return;
+        ctx.edit->getUndoManager().beginNewTransaction (automatic ? U ("Batteur automatique") : U ("Batteur : notes modifiables"));
+        drummer::setAutomatic (*r, automatic);
+        if (! automatic && ctx.showView) ctx.showView (2);           // les notes s'ouvrent dans l'éditeur
+        ctx.changed();
+        syncFromRegion();
+    };
+    autoBtn.onClick = [setMode] { setMode (true); };
+    manualBtn.onClick = [setMode] { setMode (false); };
     info.setFont (theme::ui (12.0f));
     info.setColour (juce::Label::textColourId, theme::muted);
     addAndMakeVisible (info);
@@ -123,23 +145,34 @@ void DrummerPanel::syncFromRegion()
     fills.setSelectedId (settings.fills + 1, juce::dontSendNotification);
     kick.setToggleState (settings.kick, juce::dontSendNotification); snare.setToggleState (settings.snare, juce::dontSendNotification);
     cymbals.setToggleState (settings.cymbals, juce::dontSendNotification); percussion.setToggleState (settings.percussion, juce::dontSendNotification);
-    for (auto* comp : getChildren()) if (comp != &addDrummer && comp != &info) comp->setEnabled (r != nullptr);
-    info.setText (r != nullptr ? U ("Région « ") + r->getName() + U (" » sur « ") + (r->getTrack() ? r->getTrack()->getName() : juce::String())
-                                 + U (" » · lancez la lecture pour l'entendre ; chaque réglage regénère le jeu")
-                               : U ("Sélectionnez une région de batteur, ou ajoutez un batteur"), juce::dontSendNotification);
+    const bool automatic = r != nullptr && drummer::isAutomatic (r);
+    for (auto* comp : getChildren())
+        if (comp != &addDrummer && comp != &info && comp != &autoBtn && comp != &manualBtn)
+            comp->setEnabled (automatic);                         // en notes modifiables, les réglages ne s'appliquent pas
+    autoBtn.setEnabled (r != nullptr); manualBtn.setEnabled (r != nullptr);
+    autoBtn.setToggleState (automatic, juce::dontSendNotification);
+    manualBtn.setToggleState (r != nullptr && ! automatic, juce::dontSendNotification);
+    pad->setAlpha (automatic ? 1.0f : 0.4f);
+    juce::String text;
+    if (r == nullptr) text = U ("Sélectionnez une région de batteur, ou ajoutez un batteur");
+    else if (automatic) text = U ("Région « ") + r->getName() + U (" » sur « ") + (r->getTrack() ? r->getTrack()->getName() : juce::String())
+                             + U (" » · lancez la lecture pour l'entendre ; chaque réglage regénère le jeu");
+    else text = U ("Notes modifiables : retouchez-les dans l'éditeur de notes. « Automatique » refait le jeu d'après ces réglages.");
+    info.setText (text, juce::dontSendNotification);
     repaint();
 }
 
 void DrummerPanel::timerCallback()
 {
     auto* r = region();
-    if ((r != nullptr ? r->itemID : te::EditItemID()) != shownRegion) syncFromRegion();
+    // Autre région, ou mode changé ailleurs (menu de la région) : la fenêtre suit.
+    if ((r != nullptr ? r->itemID : te::EditItemID()) != shownRegion || (r != nullptr && drummer::isAutomatic (r) != autoBtn.getToggleState())) syncFromRegion();
 }
 
 void DrummerPanel::commit (const juce::String& what)
 {
     auto* r = region();
-    if (r == nullptr) return;
+    if (r == nullptr || ! drummer::isAutomatic (r)) return;     // notes modifiables : les réglages ne refont pas le jeu
     ctx.edit->getUndoManager().beginNewTransaction (what);
     drummer::apply (*r, settings);
     ctx.changed();
@@ -167,7 +200,7 @@ void DrummerPanel::paint (juce::Graphics& g)
     g.setColour (theme::text); g.setFont (theme::ui (16.0f, true));
     g.drawText ("Batteur", 16, 10, 200, 24, juce::Justification::centredLeft);
     g.setColour (theme::muted); g.setFont (theme::ui (12.0f));
-    g.drawText (juce::String::fromUTF8 (drummer::styleDescriptions[settings.style]), 120, 10, getWidth() - 136, 24, juce::Justification::centredLeft, true);
+    g.drawText (juce::String::fromUTF8 (drummer::styleDescriptions[settings.style]), 120, 10, getWidth() - 136 - 300, 24, juce::Justification::centredLeft, true);
     g.setFont (theme::ui (11.5f));
     g.drawText ("Swing", swing.getX(), swing.getY() - 16, 120, 14, juce::Justification::centredLeft);
     g.drawText ("Jeu humain", humanize.getX(), humanize.getY() - 16, 120, 14, juce::Justification::centredLeft);
@@ -175,6 +208,8 @@ void DrummerPanel::paint (juce::Graphics& g)
 
 void DrummerPanel::resized()
 {
+    manualBtn.setBounds (getWidth() - 16 - 150, 10, 150, 24);
+    autoBtn.setBounds (manualBtn.getX() - 6 - 120, 10, 120, 24);
     auto r = getLocalBounds().reduced (16).withTrimmedTop (32);
     auto styles = r.removeFromTop (34);
     const int w = styles.getWidth() / drummer::numStyles;

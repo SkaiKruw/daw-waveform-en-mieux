@@ -506,7 +506,7 @@ void MainComponent::registerActions()
     ctx.addAction ("midi.editor", U ("Ouvrir l'éditeur (notes ou audio)"), "MIDI", KP ('e', ctrl, 0), [this]
     {
         // Région de batteur : ses réglages (style, jeu…) plutôt que les notes.
-        if (drummer::isDrummerRegion (ctx.getSelectedClip())) { ctx.perform ("midi.drummer"); return; }
+        if (drummer::isAutomatic (ctx.getSelectedClip())) { ctx.perform ("midi.drummer"); return; }
         showView (dynamic_cast<te::WaveAudioClip*> (ctx.getSelectedClip()) != nullptr ? 3 : 2);
     })->extraKeys.add (KP (KP::returnKey));
     ctx.addAction ("midi.drummer", U ("Batteur (style, jeu, remplissages)…"), "MIDI", {}, [this]
