@@ -2647,6 +2647,53 @@ private:
                 if (vcaFolder != nullptr) ed.deleteTrack (vcaFolder);
                 c4.changed();
             }
+
+            // Paroles : texte avec titres de partie, calage au tapotement, prompteur, annuler, enregistrement.
+            {
+                c4.perform ("song.lyrics");
+                pump (400);
+                LyricsPanel* lp = nullptr;
+                juce::DialogWindow* lw = nullptr;
+                for (int i = 0; i < juce::TopLevelWindow::getNumTopLevelWindows(); ++i)
+                    if (auto* dw = dynamic_cast<juce::DialogWindow*> (juce::TopLevelWindow::getTopLevelWindow (i)))
+                        if (auto* p = dynamic_cast<LyricsPanel*> (dw->getContentComponent())) { lp = p; lw = dw; }
+                ed.getUndoManager().beginNewTransaction ("Paroles");
+                lyrics::setText (ed, U ("[Couplet]\nLa nuit descend sur la ville\nOn marche sans se retourner\n\n[Refrain]\nEt la musique nous emporte"));
+                pump (200);
+                auto& tr = ed.getTransport();
+                bool tapsOk = false, lineOk = false, undoOk = false, kept = false;
+                if (lp != nullptr)
+                {
+                    lp->startTapping();
+                    for (double b : { 0.0, 4.0, 8.0 }) { tr.setPosition (ed.tempoSequence.toTime (te::BeatPosition::fromBeats (b))); lp->tap(); }
+                    const auto lines = lyrics::getLines (ed);
+                    int sung = 0; double beats[3] { -1, -1, -1 };
+                    for (auto& l : lines) if (! l.isHeading && sung < 3) beats[sung++] = l.beat;
+                    tapsOk = lines.size() == 5 && sung == 3 && std::abs (beats[0]) < 1e-6 && std::abs (beats[1] - 4.0) < 1e-6 && std::abs (beats[2] - 8.0) < 1e-6;
+                    lineOk = lyrics::lineAt (ed, 5.0) == 1 && lyrics::lineAt (ed, 9.0) == 2 && lyrics::lineAt (ed, -1.0) == -1;
+                    tr.setPosition (ed.tempoSequence.toTime (te::BeatPosition::fromBeats (5.0)));
+                    pump (300);
+                    snapshot (*lp, dir.getChildFile ("29-paroles.png"));
+                    ed.getUndoManager().undo();                          // dernier calage retiré
+                    pump (100);
+                    undoOk = lyrics::lineAt (ed, 9.0) == 1;
+                    ed.getUndoManager().redo();
+                    const auto savedLyrics = dir.getChildFile ("paroles.onde");
+                    if (mc->saveProjectTo (savedLyrics))
+                        if (auto reopened = MainComponent::loadProject (*engine, savedLyrics))
+                        {
+                            kept = lyrics::getText (*reopened).contains (U ("La nuit descend")) && lyrics::lineAt (*reopened, 9.0) == 2;
+                            EditContext::destroyEdit (reopened);
+                        }
+                    mc->showView (0);
+                    pump (300);
+                    snapshot (*mc, dir.getChildFile ("30-paroles-projet.png"));
+                }
+                check (lp != nullptr && tapsOk && lineOk && undoOk && kept,
+                       U ("paroles : 3 phrases calées en tapant Entrée (temps 1, 5, 9), prompteur sur la bonne phrase, annuler retire le dernier calage, retrouvées après réouverture"));
+                if (lw != nullptr) delete lw;
+                tr.setPosition (te::TimePosition());
+            }
         }
 
         std::printf ("\n%s\n", failures == 0 ? "INTERFACE OK — toutes les vérifications passent." : "DES VÉRIFICATIONS ÉCHOUENT");

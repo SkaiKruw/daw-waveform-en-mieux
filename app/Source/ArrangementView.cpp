@@ -1,4 +1,5 @@
 #include "ArrangementView.h"
+#include "Lyrics.h"
 #include "Drummer.h"
 
 namespace
@@ -1866,9 +1867,30 @@ void ArrangementView::paint (juce::Graphics& g)
             g.setColour (juce::Colour (0xff17181a)); g.drawText (label, flag.withTrimmedLeft (4.0f), juce::Justification::centredLeft, false);
             g.restoreState();
         }
+        // Paroles calées : chaque phrase à son temps, jusqu'à la suivante.
+        const auto words = lyrics::getLines (*ctx.edit);
+        bool anyLyric = false;
+        {
+            g.saveState(); g.reduceClipRegion (headerW, markerTop, getWidth() - headerW, markerH);
+            g.setFont (theme::ui (10.5f).italicised());
+            for (size_t i = 0; i < words.size(); ++i)
+            {
+                if (words[i].isHeading || words[i].beat < 0.0) continue;
+                anyLyric = true;
+                const float x = timeToX (ctx.edit->tempoSequence.toTime (te::BeatPosition::fromBeats (words[i].beat)).inSeconds());
+                float next = (float) getWidth();
+                for (size_t k = i + 1; k < words.size(); ++k)
+                    if (! words[k].isHeading && words[k].beat >= 0.0) { next = timeToX (ctx.edit->tempoSequence.toTime (te::BeatPosition::fromBeats (words[k].beat)).inSeconds()); break; }
+                if (next < headerW || x > getWidth()) continue;
+                g.setColour (juce::Colour (0xffe8697a)); g.fillRect (x, (float) markerTop + 2, 2.0f, (float) markerH - 4);
+                g.setColour (juce::Colour (0xfff0b8c0));
+                g.drawText (words[i].text, juce::Rectangle<float> (x + 5.0f, (float) markerTop, juce::jmax (0.0f, next - x - 8.0f), (float) markerH), juce::Justification::centredLeft, true);
+            }
+            g.restoreState();
+        }
         g.setColour (theme::dim); g.setFont (theme::ui (10.0f));
-        if (ctx.edit->getMarkerManager().getMarkers().isEmpty())
-            g.drawText (U ("Repères : Inser. pour en ajouter au curseur"), headerW + 6, markerTop, 300, markerH, juce::Justification::centredLeft);
+        if (ctx.edit->getMarkerManager().getMarkers().isEmpty() && ! anyLyric)
+            g.drawText (U ("Repères : Inser. pour en ajouter au curseur · paroles : Ctrl+Maj+P"), headerW + 6, markerTop, 420, markerH, juce::Justification::centredLeft);
     }
     g.setColour (theme::line); g.drawHorizontalLine (barsTop, (float) headerW, (float) getWidth());
     g.setFont (theme::ui (11.5f));

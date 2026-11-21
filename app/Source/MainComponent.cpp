@@ -121,6 +121,7 @@ MainComponent::~MainComponent()
     if (keyboardWindow != nullptr) delete keyboardWindow.getComponent();
     if (libraryWindow != nullptr) delete libraryWindow.getComponent();
     if (drummerWindow != nullptr) delete drummerWindow.getComponent();
+    if (lyricsWindow != nullptr) delete lyricsWindow.getComponent();
     ondeui::globalShortcuts() = nullptr;
     for (auto& [id, w] : effectWindows) if (w != nullptr) delete w.getComponent();
     remote.stop();
@@ -385,6 +386,11 @@ void MainComponent::registerActions()
         else setStatus (freeze ? U ("« ") + t->getName() + U (" » est gelée : son figé, instruments et effets au repos (dégeler pour les modifier)")
                                : U ("« ") + t->getName() + U (" » est dégelée"));
         ctx.changed();
+    });
+    ctx.addAction ("song.lyrics", U ("Paroles (prompteur, calage sur la musique)…"), "Projet", KP ('p', ctrl | shift, 0), [this]
+    {
+        if (lyricsWindow != nullptr) { lyricsWindow->toFront (true); return; }
+        lyricsWindow = LyricsPanel::show (ctx);
     });
     ctx.addAction ("track.addAudio", U ("Ajouter une piste › Audio"), "Projet", KP ('t', ctrl, 0), [this] { if (edit) { edit->getUndoManager().beginNewTransaction(); ctx.addAudioTrack(); } });
     ctx.addAction ("track.addInst", U ("Ajouter une piste › Instrument"), "Projet", KP ('t', ctrl | shift, 0), [this] { if (edit) { edit->getUndoManager().beginNewTransaction(); ctx.addInstrumentTrack(); } });
