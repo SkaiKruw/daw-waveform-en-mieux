@@ -73,7 +73,7 @@ MainComponent::MainComponent (te::Engine& e, PluginCatalog& c) : engine (e), cat
         return projectName() + (dirty ? " *" : "") + U ("   ·   ") + (untitled ? U ("copie de secours il y a ") : U ("sauvegarde auto il y a ")) + juce::String (ago) + " s";
     };
 
-    for (auto* b : { &lowerMixTab, &lowerEditTab, &lowerAudioTab })
+    for (auto* b : { &lowerMixTab, &lowerEditTab, &lowerAudioTab, &lowerTabTab })
     {
         styleButton (*b);
         b->setClickingTogglesState (true);
@@ -87,6 +87,7 @@ MainComponent::MainComponent (te::Engine& e, PluginCatalog& c) : engine (e), cat
     lowerMixTab.onClick = [this] { showView (1); };
     lowerEditTab.onClick = [this] { showView (2); };
     lowerAudioTab.onClick = [this] { showView (3); };
+    lowerTabTab.onClick = [this] { showView (4); };
     lowerClose.onClick = [this] { setZone (1, false); };
 
     ctx.showView = [this] (int v) { showView (v); };
@@ -130,7 +131,7 @@ MainComponent::~MainComponent()
     ctx.removeChangeListener (this);
     transport.detachMeters();
     inspector.detachMeters();
-    arrangement = nullptr; mixer = nullptr; pianoRoll = nullptr; audioEditor = nullptr;
+    arrangement = nullptr; mixer = nullptr; pianoRoll = nullptr; audioEditor = nullptr; tabView = nullptr;
     onde::trace ("~MainComponent: vues détruites");
     ctx.edit = nullptr;
     EditContext::destroyEdit (edit);
@@ -189,7 +190,7 @@ void MainComponent::setEdit (std::unique_ptr<te::Edit> newEdit, const juce::File
 {
     transport.detachMeters();
     inspector.detachMeters();
-    arrangement = nullptr; mixer = nullptr; pianoRoll = nullptr; audioEditor = nullptr;
+    arrangement = nullptr; mixer = nullptr; pianoRoll = nullptr; audioEditor = nullptr; tabView = nullptr;
     ctx.edit = nullptr;
     ctx.selectedClipID = {}; ctx.selectedTrackID = {};
     ctx.automationShown.clear();
@@ -227,6 +228,8 @@ void MainComponent::setEdit (std::unique_ptr<te::Edit> newEdit, const juce::File
     addAndMakeVisible (*arrangement); addChildComponent (*mixer); addChildComponent (*pianoRoll);
     audioEditor = std::make_unique<AudioEditorView> (ctx);
     addChildComponent (*audioEditor);
+    tabView = std::make_unique<TabView> (ctx);
+    addChildComponent (*tabView);
     if (auto* t = ctx.getSelectedTrack()) { ctx.selectedTrackID = t->itemID; ctx.routeInputsTo (t); }
     palette.toFront (false);
     showView (lowerVisible ? lowerTab : 0);
@@ -251,11 +254,12 @@ void MainComponent::setZone (int which, bool visible)
 
 void MainComponent::showView (int v)
 {
-    if (v >= 1 && v <= 3) { lowerTab = v; lowerVisible = true; }
-    (lowerTab == 1 ? lowerMixTab : lowerTab == 2 ? lowerEditTab : lowerAudioTab).setToggleState (true, juce::dontSendNotification);
+    if (v >= 1 && v <= 4) { lowerTab = v; lowerVisible = true; }
+    (lowerTab == 1 ? lowerMixTab : lowerTab == 2 ? lowerEditTab : lowerTab == 3 ? lowerAudioTab : lowerTabTab).setToggleState (true, juce::dontSendNotification);
     resized();
     if (arrangement && v == 0) arrangement->grabKeyboardFocus();
     grabKeyboardFocus();
+    if (v == 4 && tabView) tabView->grabKeyboardFocus();          // la tablature reçoit les chiffres tapés
 }
 
 void MainComponent::openPalette (const juce::String& q)
@@ -718,6 +722,7 @@ void MainComponent::registerActions()
     auto* il = ctx.addAction ("view.infoline", U ("Ligne d'infos"), U ("Fenêtre"), KP ('i', ctrl, 0), [this] { infoVisible = ! infoVisible; resized(); });
     il->isTicked = [this] { return infoVisible; };
     ctx.addAction ("view.piano", U ("Éditeur de notes (zone inférieure)"), U ("Fenêtre"), KP ('3', alt, 0), [this] { showView (2); })->separatorBefore = true;
+    ctx.addAction ("view.tab", U ("Tablature (guitare, basse, ukulélé)"), U ("Fenêtre"), KP ('5', alt, 0), [this] { showView (4); });
     ctx.addAction ("view.mixer2", U ("MixConsole (zone inférieure)"), U ("Fenêtre"), KP ('2', alt, 0), [this] { showView (1); });
     ctx.addAction ("view.arrangement", U ("Fenêtre de projet seule"), U ("Fenêtre"), KP ('1', alt, 0), [this] { setZone (1, false); });
     ctx.addAction ("view.zoomIn", "Zoom avant", U ("Fenêtre"), KP ('h'), [this] { if (arrangement && edit) arrangement->zoom (1.25, edit->getTransport().getPosition().inSeconds()); })->separatorBefore = true;
@@ -1446,20 +1451,23 @@ void MainComponent::resized()
 
 void MainComponent::layoutLowerZone()
 {
-    for (auto* b : { &lowerMixTab, &lowerEditTab, &lowerAudioTab, &lowerClose }) b->setVisible (lowerVisible);
+    for (auto* b : { &lowerMixTab, &lowerEditTab, &lowerAudioTab, &lowerTabTab, &lowerClose }) b->setVisible (lowerVisible);
     if (mixer) mixer->setVisible (lowerVisible && lowerTab == 1);
     if (pianoRoll) pianoRoll->setVisible (lowerVisible && lowerTab == 2);
     if (audioEditor) audioEditor->setVisible (lowerVisible && lowerTab == 3);
+    if (tabView) tabView->setVisible (lowerVisible && lowerTab == 4);
     if (! lowerVisible) return;
     auto r = lowerArea.withTrimmedTop (5);
     auto tabs = r.removeFromTop (lowerTabsH).reduced (6, 2);
     lowerMixTab.setBounds (tabs.removeFromLeft (110)); tabs.removeFromLeft (4);
     lowerEditTab.setBounds (tabs.removeFromLeft (140)); tabs.removeFromLeft (4);
-    lowerAudioTab.setBounds (tabs.removeFromLeft (120));
+    lowerAudioTab.setBounds (tabs.removeFromLeft (120)); tabs.removeFromLeft (4);
+    lowerTabTab.setBounds (tabs.removeFromLeft (100));
     lowerClose.setBounds (tabs.removeFromRight (26));
     if (mixer) mixer->setBounds (r);
     if (pianoRoll) pianoRoll->setBounds (r);
     if (audioEditor) audioEditor->setBounds (r);
+    if (tabView) tabView->setBounds (r);
 }
 
 void MainComponent::paint (juce::Graphics& g)

@@ -19,6 +19,7 @@
 #include "DrummerPanel.h"
 #include "NewTrackPanel.h"
 #include "Lyrics.h"
+#include "TabView.h"
 #include "OndeEffects.h"
 #include "CommandPalette.h"
 #include "Panels.h"
@@ -134,11 +135,12 @@ private:
     std::unique_ptr<MixerView> mixer;
     std::unique_ptr<PianoRollView> pianoRoll;
     std::unique_ptr<AudioEditorView> audioEditor;
+    std::unique_ptr<TabView> tabView;
     int lowerTab = 1;                               // 1 MixConsole, 2 éditeur de notes, 3 éditeur audio
     bool inspectorVisible = true, lowerVisible = false, rightVisible = false, infoVisible = true;
     int lowerH = 420, dragLowerStartH = 0;
     bool draggingLower = false;
-    juce::TextButton lowerMixTab { "MixConsole" }, lowerEditTab { U ("Éditeur de notes") }, lowerAudioTab { U ("Éditeur audio") }, lowerClose { U ("×") };
+    juce::TextButton lowerMixTab { "MixConsole" }, lowerEditTab { U ("Éditeur de notes") }, lowerAudioTab { U ("Éditeur audio") }, lowerTabTab { "Tablature" }, lowerClose { U ("×") };
     juce::Rectangle<int> lowerArea, centreArea;
 
     CommandPalette palette { ctx };

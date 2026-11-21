@@ -2694,6 +2694,62 @@ private:
                 if (lw != nullptr) delete lw;
                 tr.setPosition (te::TimePosition());
             }
+
+            // Tablature : écrire des cases, changer de corde, deux chiffres, doigté auto, texte, basse, son au rendu.
+            {
+                auto* gt = LibraryPanel::applyToTrack (c4, nullptr, *ondefx::SynthPlugin::findPreset ("Pluck"));
+                gt->setName ("Guitare tab");
+                auto tclip = gt->insertMIDIClip ("riff", { te::TimePosition(), te::TimePosition::fromSeconds (4.0) }, nullptr);
+                c4.selectTrack (gt);
+                c4.selectClip (tclip.get());
+                mc->showView (4);
+                pump (300);
+                std::function<TabView* (juce::Component&)> findTab = [&] (juce::Component& comp) -> TabView*
+                {
+                    if (auto* r = dynamic_cast<TabView*> (&comp)) return r;
+                    for (auto* ch : comp.getChildren()) if (auto* r = findTab (*ch)) return r;
+                    return nullptr;
+                };
+                auto* tab = findTab (*mc);
+                bool placed = false, restrung = false, twoDigits = false, ascii = false, bass = false, sounds = false;
+                if (tab != nullptr)
+                {
+                    tab->setTuning (0);
+                    auto* n1 = tab->writeFret (5, 0.0, 3);         // Mi grave, case 3 → Sol (43)
+                    auto* n2 = tab->writeFret (4, 0.5, 2);         // La, case 2 → Si (47)
+                    auto* n3 = tab->writeFret (0, 1.0, 0);         // Mi aigu à vide (64)
+                    placed = n1 && n2 && n3 && n1->getNoteNumber() == 43 && n2->getNoteNumber() == 47 && n3->getNoteNumber() == 64
+                             && tab->placeOf (*n1) == std::make_pair (5, 3) && tab->placeOf (*n3) == std::make_pair (0, 0);
+                    // Même note sur la corde de Si : case 5.
+                    tab->moveCaret (0, 1.0);
+                    tab->keyPressed (juce::KeyPress (juce::KeyPress::downKey));
+                    restrung = n3->getNoteNumber() == 64 && tab->placeOf (*n3) == std::make_pair (1, 5);
+                    // Deux chiffres tapés vite : case 12 sur la corde de Sol (55 + 12 = 67).
+                    tab->moveCaret (2, 1.5);
+                    tab->keyPressed (juce::KeyPress ('1', {}, '1'));
+                    tab->keyPressed (juce::KeyPress ('2', {}, '2'));
+                    int at15 = -1;
+                    for (auto* n : tclip->getSequence().getNotes()) if (std::abs (n->getStartBeat().inBeats() - 1.5) < 1e-6) at15 = n->getNoteNumber();
+                    twoDigits = at15 == 67;
+                    snapshot (*tab, dir.getChildFile ("31-tablature.png"));
+                    const auto text = tab->asciiTab();
+                    ascii = juce::StringArray::fromLines (text).size() >= 7 && text.contains ("12") && text.contains ("|");
+                    std::printf ("%s\n", text.toRawUTF8());
+                    double r = 0; const auto f = dir.getChildFile ("tablature.wav");
+                    renderEdit (ed, f, { gt });
+                    const auto b = readAll (f, r);
+                    sounds = juce::Decibels::gainToDecibels (b.getRMSLevel (0, 0, juce::jmin (b.getNumSamples(), 96000))) > -45.0f;
+                    tab->autoFingering();
+                    tab->setTuning (4);                          // basse 4 cordes : Sol grave (43) = corde de Sol à vide
+                    bass = tab->placeOf (*n1) == std::make_pair (0, 0);
+                    tab->setTuning (0);
+                }
+                check (tab != nullptr && placed && restrung && twoDigits && ascii && bass && sounds,
+                       U ("tablature : cases écrites (Mi grave 3 = Sol), même note passée sur la corde de Si (case 5), « 12 » tapé = case 12, texte copiable, accordage basse, son au rendu"));
+                mc->showView (0);
+                ed.deleteTrack (gt);
+                c4.changed();
+            }
         }
 
         std::printf ("\n%s\n", failures == 0 ? "INTERFACE OK — toutes les vérifications passent." : "DES VÉRIFICATIONS ÉCHOUENT");
