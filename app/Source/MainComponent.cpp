@@ -1,4 +1,5 @@
 #include "MainComponent.h"
+#include "OndeFx2.h"
 #include "ParamControls.h"
 #include "DemoContent.h"
 #include "OndeSynth.h"
@@ -208,6 +209,10 @@ void MainComponent::setEdit (std::unique_ptr<te::Edit> newEdit, const juce::File
         bool added = false;
         for (auto* f : te::getTracksOfType<te::FolderTrack> (*edit, true))
             if (f->isSubmixFolder() && EditContext::groupMeter (*f, false) == nullptr) { EditContext::groupMeter (*f, true); added = true; }
+        // Analyse du mix sur la sortie (une par projet, ajoutée aux anciens projets).
+        bool hadMeter = false;
+        for (auto& p : edit->getMasterPluginList().getPlugins()) hadMeter |= dynamic_cast<ondefx::MasterMeterPlugin*> (p) != nullptr;
+        if (! hadMeter) { ondefx::MasterMeterPlugin::findOrCreate (*edit); added = true; }
         if (added) edit->getUndoManager().clearUndoHistory();
     }
 

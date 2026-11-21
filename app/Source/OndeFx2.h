@@ -93,3 +93,42 @@ namespace ondefx
     // Fenêtre simple (boutons rotatifs) pour ces effets ; nullptr si le plugin n'en est pas un.
     std::unique_ptr<juce::Component> createFx2Editor (te::Plugin&);
 }
+
+namespace ondefx
+{
+    //==============================================================================
+    // Analyse du mix (posée sur la sortie du projet) : sonie EBU R128 (momentanée, court terme, intégrée), crête vraie,
+    // corrélation de phase. Écoute : « Mono » et « Atténuer » (-20 dB) n'agissent qu'à l'écoute, jamais à l'export.
+    class MasterMeterPlugin  : public OndeEffect
+    {
+    public:
+        explicit MasterMeterPlugin (te::PluginCreationInfo);
+        static const char* xmlTypeName;
+        static const char* getPluginName()           { return "Onde Analyse"; }
+        juce::String getName() const override        { return "Onde Analyse"; }
+        juce::String getPluginType() override        { return xmlTypeName; }
+        juce::String getShortName (int) override     { return "Analyse"; }
+        void initialise (const te::PluginInitialisationInfo&) override;
+        void deinitialise() override {}
+        void reset() override;
+        void applyToBuffer (const te::PluginRenderContext&) override;
+        void resetMeasurements()                     { resetRequested = true; }
+        std::atomic<bool> monoListen { false }, dimListen { false };   // aides d'écoute, non enregistrées, jamais à l'export
+
+        std::atomic<float> momentary { -100 }, shortTerm { -100 }, integrated { -100 }, truePeakMax { -100 }, correlation { 1.0f };
+        static MasterMeterPlugin* findOrCreate (te::Edit&);   // une seule par projet, sur la sortie
+
+    private:
+        double rate = 48000.0;
+        TruePeakDetector tp;
+        struct BiquadD { double b0 = 1, b1 = 0, b2 = 0, a1 = 0, a2 = 0, z1[2] {}, z2[2] {};
+                         double process (double x, int c) noexcept { const double y = b0 * x + z1[c]; z1[c] = b1 * x - a1 * y + z2[c]; z2[c] = b2 * x - a2 * y; return y; }
+                         void reset() noexcept { z1[0] = z1[1] = z2[0] = z2[1] = 0; } } shelf, high;
+        double hopEnergy = 0, hops[30] {}, binEnergy[800] {};
+        int hopCount = 0, hopLen = 4800, hopPos = 0, hopsFilled = 0, binCount[800] {};
+        double sLL = 0, sRR = 0, sLR = 0;
+        float tpMax = 0;
+        std::atomic<bool> resetRequested { false };
+        void clear();
+    };
+}

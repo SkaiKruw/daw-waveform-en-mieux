@@ -761,3 +761,107 @@ namespace ondefx
         return {};
     }
 }
+
+namespace ondefx
+{
+    //==============================================================================
+    const char* MasterMeterPlugin::xmlTypeName = "ondeMasterMeter";
+
+    MasterMeterPlugin::MasterMeterPlugin (te::PluginCreationInfo info) : OndeEffect (info) {}
+
+    MasterMeterPlugin* MasterMeterPlugin::findOrCreate (te::Edit& edit)
+    {
+        auto& list = edit.getMasterPluginList();
+        for (auto* p : list) if (auto* m = dynamic_cast<MasterMeterPlugin*> (p)) return m;
+        auto p = edit.getPluginCache().createNewPlugin (xmlTypeName, {});
+        if (p == nullptr) return nullptr;
+        list.insertPlugin (p, list.size(), nullptr);          // en dernier : ce qui sort vraiment
+        return dynamic_cast<MasterMeterPlugin*> (p.get());
+    }
+
+    void MasterMeterPlugin::initialise (const te::PluginInitialisationInfo& info)
+    {
+        rate = info.sampleRate;
+        hopLen = juce::jmax (1, juce::roundToInt (0.1 * rate));
+        const double pi = juce::MathConstants<double>::pi;
+        {
+            const double f0 = 1681.974450955533, G = 3.999843853973347, Q = 0.7071752369554196;
+            const double K = std::tan (pi * f0 / rate), Vh = std::pow (10.0, G / 20.0), Vb = std::pow (Vh, 0.4996667741545416), a0 = 1.0 + K / Q + K * K;
+            shelf.b0 = (Vh + Vb * K / Q + K * K) / a0; shelf.b1 = 2.0 * (K * K - Vh) / a0; shelf.b2 = (Vh - Vb * K / Q + K * K) / a0;
+            shelf.a1 = 2.0 * (K * K - 1.0) / a0; shelf.a2 = (1.0 - K / Q + K * K) / a0;
+        }
+        {
+            const double f0 = 38.13547087602444, Q = 0.5003270373238773, K = std::tan (pi * f0 / rate), a0 = 1.0 + K / Q + K * K;
+            high.b0 = 1.0; high.b1 = -2.0; high.b2 = 1.0; high.a1 = 2.0 * (K * K - 1.0) / a0; high.a2 = (1.0 - K / Q + K * K) / a0;
+        }
+        clear();
+    }
+
+    void MasterMeterPlugin::reset() { tp.reset(); }
+
+    void MasterMeterPlugin::clear()
+    {
+        shelf.reset(); high.reset(); tp.reset();
+        hopEnergy = 0; hopCount = 0; hopPos = 0; hopsFilled = 0;
+        std::fill (std::begin (hops), std::end (hops), 0.0);
+        std::fill (std::begin (binEnergy), std::end (binEnergy), 0.0);
+        std::fill (std::begin (binCount), std::end (binCount), 0);
+        sLL = sRR = sLR = 0; tpMax = 0;
+        momentary = -100; shortTerm = -100; integrated = -100; truePeakMax = -100; correlation = 1.0f;
+    }
+
+    void MasterMeterPlugin::applyToBuffer (const te::PluginRenderContext& fc)
+    {
+        if (fc.destBuffer == nullptr) return;
+        if (resetRequested.exchange (false)) clear();
+        auto& buf = *fc.destBuffer;
+        const int chans = juce::jmin (2, buf.getNumChannels()), n = fc.bufferNumSamples, start = fc.bufferStartSample;
+        if (chans == 0) return;
+        float* L = buf.getWritePointer (0, start);
+        float* R = chans > 1 ? buf.getWritePointer (1, start) : L;
+        auto lufs = [] (double e) { return -0.691 + 10.0 * std::log10 (std::max (e, 1.0e-12)); };
+        auto meanLast = [this] (int count) { double s = 0; for (int j = 0; j < count; ++j) s += hops[(hopPos - 1 - j + 60) % 30]; return s / count; };
+        const double corrCoef = std::exp (-1.0 / (0.3 * rate));
+        float tpBlock = 0;
+        for (int i = 0; i < n; ++i)
+        {
+            const double l = L[i], r = R[i];
+            // Corrélation de phase (fenêtre glissante ~300 ms) : +1 = mono, 0 = très large, -1 = opposition de phase.
+            sLL = sLL * corrCoef + l * l; sRR = sRR * corrCoef + r * r; sLR = sLR * corrCoef + l * r;
+            tpBlock = std::max ({ tpBlock, tp.process (L[i], 0), tp.process (R[i], 1) });
+            const double yl = high.process (shelf.process (l, 0), 0), yr = high.process (shelf.process (r, 1), 1);
+            hopEnergy += yl * yl + yr * yr;
+            if (++hopCount < hopLen) continue;
+            hops[hopPos] = hopEnergy / hopLen; hopPos = (hopPos + 1) % 30; hopsFilled = std::min (30, hopsFilled + 1);
+            hopEnergy = 0; hopCount = 0;
+            if (hopsFilled < 4) continue;
+            const double block = meanLast (4), blockL = lufs (block);
+            momentary = (float) blockL;
+            if (hopsFilled >= 30) shortTerm = (float) lufs (meanLast (30));
+            if (blockL >= -70.0) { const int bin = std::min (799, (int) ((blockL + 70.0) * 10.0)); binEnergy[bin] += block; ++binCount[bin]; }
+            double sum = 0; int count = 0;
+            for (int b = 0; b < 800; ++b) { sum += binEnergy[b]; count += binCount[b]; }
+            if (count == 0) continue;
+            const int first = juce::jlimit (0, 800, (int) std::ceil ((lufs (sum / count) - 10.0 + 70.0) * 10.0));
+            sum = 0; count = 0;
+            for (int b = first; b < 800; ++b) { sum += binEnergy[b]; count += binCount[b]; }
+            if (count > 0) integrated = (float) lufs (sum / count);
+        }
+        tpMax = std::max (tpMax, tpBlock);
+        truePeakMax = juce::Decibels::gainToDecibels (tpMax, -100.0f);
+        correlation = (float) (sLL > 1.0e-12 && sRR > 1.0e-12 ? sLR / std::sqrt (sLL * sRR) : 1.0);
+        // Aides d'écoute : jamais pendant un export (le fichier reste celui du mix).
+        if (! fc.isRendering)
+        {
+            const bool mono = monoListen.load() && chans > 1, dim = dimListen.load();
+            const float g = dim ? 0.1f : 1.0f;
+            if (mono || dim)
+                for (int i = 0; i < n; ++i)
+                {
+                    const float m = mono ? 0.5f * (L[i] + R[i]) : 0.0f;
+                    L[i] = (mono ? m : L[i]) * g;
+                    if (chans > 1) R[i] = (mono ? m : R[i]) * g;
+                }
+        }
+    }
+}

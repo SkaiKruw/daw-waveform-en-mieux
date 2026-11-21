@@ -1989,6 +1989,47 @@ private:
                        U ("Onde Limiteur : sonie d'un 1 kHz à -20 dBFS → intégrée ") + juce::String (li, 2) + U (", momentanée ")
                        + juce::String (lm, 2) + U (", court terme ") + juce::String (ls, 2) + " LUFS");
 
+                // Analyse du mix (sortie du projet) : sonie, corrélation ; Mono et -20 dB n'agissent qu'à l'écoute.
+                {
+                    auto* am = ondefx::MasterMeterPlugin::findOrCreate (ed);
+                    bool single = am != nullptr && ondefx::MasterMeterPlugin::findOrCreate (ed) == am;
+                    auto probePtr = ed.getPluginCache().createNewPlugin (ondefx::MasterMeterPlugin::xmlTypeName, {});
+                    auto* probe = dynamic_cast<ondefx::MasterMeterPlugin*> (probePtr.get());
+                    probe->initialise ({ te::TimePosition(), 48000.0, 512 });
+                    auto live = qb, offline = qb;
+                    probe->monoListen = true; probe->dimListen = true;
+                    for (int s = 0; s < (int) (48000 * 3.5); s += 512)
+                    {
+                        te::PluginRenderContext rc (&offline, s, 512, nullptr, 0.0, {}, true, false, true, false);
+                        probe->applyToBuffer (rc);
+                    }
+                    const float mi = probe->integrated.load(), corr = probe->correlation.load(), tpm = probe->truePeakMax.load();
+                    probe->resetMeasurements();
+                    for (int s = 0; s < live.getNumSamples(); s += 512)
+                    {
+                        te::PluginRenderContext rc (&live, s, std::min (512, live.getNumSamples() - s), nullptr, 0.0, {}, true, false, false, false);
+                        probe->applyToBuffer (rc);
+                    }
+                    const float offPk = peakDb (offline) - peakDb (qb), livePk = peakDb (live) - peakDb (qb);
+                    check (single && std::abs (mi + 20.0f) < 0.3f && corr > 0.99f && std::abs (tpm + 20.0f) < 0.5f && std::abs (offPk) < 0.01f && std::abs (livePk + 20.0f) < 0.2f,
+                           U ("Analyse du mix : 1 kHz à -20 dBFS → ") + juce::String (mi, 2) + U (" LUFS, crête vraie ") + juce::String (tpm, 1)
+                           + U (" dBTP, corrélation ") + juce::String (corr, 2) + U (" ; Mono + -20 dB : export ") + juce::String (offPk, 2)
+                           + U (" dB, écoute ") + juce::String (livePk, 1) + " dB" + (single ? "" : U (" (analyse en double !)")));
+                    am->monoListen = true; am->dimListen = true;
+                    const auto withListen = renderTrack ("analyse-ecoute");
+                    am->monoListen = false; am->dimListen = false;
+                    t->getVolumePlugin()->polarity = true;
+                    const auto inverted = renderTrack ("polarite");
+                    t->getVolumePlugin()->polarity = false;
+                    double dot = 0, e1 = 0, e2 = 0;
+                    for (int i = 0; i < std::min (inverted.getNumSamples(), qb.getNumSamples()); ++i)
+                    { const double x = qb.getSample (0, i), y = inverted.getSample (0, i); dot += x * y; e1 += x * x; e2 += y * y; }
+                    const double inv = dot / std::sqrt (juce::jmax (1.0e-12, e1 * e2));
+                    check (std::abs (peakDb (withListen) - peakDb (qb)) < 0.05f && inv < -0.99,
+                           U ("export avec Mono et -20 dB actifs : crête ") + juce::String (peakDb (withListen) - peakDb (qb), 2)
+                           + U (" dB d'écart ; polarité Ø : corrélation avec l'original ") + juce::String (inv, 3));
+                }
+
                 // Crête vraie : sinus à fs/4 déphasé de 45° → échantillons à -3 dBFS, crête réelle à 0 dBTP.
                 const auto isp = dir.getChildFile ("sinus-inter-echantillons.wav");
                 writeTones (isp, { { 12000.0, 1.0f } }, juce::MathConstants<double>::pi / 4.0, true);

@@ -18,7 +18,8 @@ que les utilisateurs mettent en avant dans les tests de logiciels et de plugins.
 | Piste d'arrangement (sections, enchaînements) | ❌ | priorité moyenne |
 | Piste d'accords, assistant d'accords | ❌ | |
 | Versions de piste, couloirs et comping de prises | ❌ | priorité haute pour l'enregistrement |
-| Geler / rendre une piste sur place | 🟡 | « Rendre définitif » par événement ; pas encore par piste |
+| Geler / rendre une piste sur place | ✅ | Geler la piste (Ctrl+Alt+F) et « Rendre définitif » par événement |
+| Piste de paroles | ✅ | paroles calées au tapotement, prompteur, affichées dans la règle |
 | Courbes de volume dessinées dans les événements | 🟡 | gain et fondus par poignées |
 | Alignement audio, détection de transitoires, AudioWarp | ❌ | |
 | VariAudio (correction de hauteur) | ❌ | |
@@ -32,11 +33,11 @@ que les utilisateurs mettent en avant dans les tests de logiciels et de plugins.
 | --- | --- | --- |
 | Éditeur de notes, vélocité, quantification, assistant de gamme | ✅ | |
 | Couloirs de contrôleurs (CC, pitch bend) | ✅ | vélocité, CC 0-127, pitch bend, aftertouch ; dessin libre et lignes |
-| Éditeur de batterie, piste de batterie, boîte à rythmes | ❌ | |
+| Éditeur de batterie, piste de batterie, boîte à rythmes | 🟡 | Batteur automatique (6 styles), modifiable note à note |
 | Séquenceur de motifs | ❌ | |
-| Éditeur de partition | ❌ | |
+| Éditeur de partition | 🟡 | tablature (guitare, basse, ukulélé) ; pas de portée classique |
 | Échantillonneur (piste sampler) | ❌ | |
-| Instruments intégrés | 🟡 | 4OSC (Tracktion) ; VST3 isolés |
+| Instruments intégrés | ✅ | Onde Synth (4 moteurs, 30 sons), 4OSC ; VST3 isolés |
 
 ## Mixage et effets
 
@@ -53,8 +54,9 @@ que les utilisateurs mettent en avant dans les tests de logiciels et de plugins.
 | Modulateurs (LFO, enveloppe, pas à pas) sur n'importe quel paramètre | ✅ | LFO, pas à pas, suiveur d'enveloppe, aléatoire ; profondeur par affectation |
 | Automation et modulation des paramètres des VST3 isolés | ✅ | paramètres publiés par le processus isolé, dans les deux sens (fenêtre du plugin → Onde) |
 | Automation de tous les paramètres dans la fenêtre de projet | ✅ | volume, panoramique et chaque paramètre de chaque effet |
-| Faders VCA | ❌ | |
-| Control Room | ❌ | |
+| Faders VCA | ✅ | dossier VCA |
+| Inversion de polarité, analyse du mix (LUFS, crête vraie, corrélation), écoute mono et atténuée | ✅ | MixConsole ; l'écoute n'agit jamais sur l'export |
+| Control Room | 🟡 | Mono et -20 dB sur la sortie ; pas de sorties casque séparées |
 | Réverbération, delay, modulation, saturation de qualité | ✅ | Onde Espace, Onde Écho, Onde Saturation (chorus et modulation : à faire) |
 | Séparation de sources (stems) | ✅ | **avantage d'Onde** : Demucs v4 intégré |
 
@@ -74,7 +76,7 @@ que les utilisateurs mettent en avant dans les tests de logiciels et de plugins.
 1. Effets Onde 2 : EQ dynamique et M/S, compresseur complet, limiteur True Peak et LUFS (en cours).
 2. ~~Modulateurs (LFO, enveloppe)~~, ~~paramètres des VST3 isolés~~, ~~automation de tous les paramètres~~ : fait. Ensuite : « tout est déjà là » (voir la dernière section).
 3. ~~Couloirs de contrôleurs MIDI dans l'éditeur de notes~~ : fait.
-4. Geler / rendre une piste sur place ; faders VCA.
+4. ~~Geler une piste ; faders VCA ; paroles ; tablature ; analyse du mix~~ : fait.
 5. Couloirs de prises et comping.
 6. Piste d'arrangement.
 7. Effets Onde : réverbération, delay, saturation, de-esser, gate.

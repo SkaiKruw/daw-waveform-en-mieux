@@ -1,5 +1,6 @@
 #include "MixerView.h"
 #include "Panels.h"
+#include "OndeFx2.h"
 
 // Tranche de console : inserts, panoramique, état, fader + vumètre, nom.
 class MixerView::Strip  : public juce::Component
@@ -32,6 +33,13 @@ public:
         pan.onDragStart = [this] { ctx.edit->getUndoManager().beginNewTransaction (U ("Panoramique")); };
         pan.onValueChange = [this] { if (volumePlugin) volumePlugin->setPan ((float) pan.getValue()); };
 
+        if (volumePlugin != nullptr && (track != nullptr || (group != nullptr && vca == nullptr)))
+        {
+            styleStateButton (phase, theme::accent);
+            phase.setTooltip (U ("Inverser la polarité (phase) de cette voie"));
+            phase.onClick = [this] { ctx.edit->getUndoManager().beginNewTransaction (U ("Polarité")); volumePlugin->polarity = phase.getToggleState(); };
+            addAndMakeVisible (phase);
+        }
         addAndMakeVisible (meter);
         if (track)
         {
@@ -63,7 +71,21 @@ public:
                 if (auto* lm = EditContext::groupMeter (*group, false)) { meterPlugin = lm; measurer = &lm->measurer; measurer->addClient (client); }
             if (vca != nullptr) { pan.setVisible (false); meter.setVisible (false); fader.setTooltip (U ("VCA : monte ou baisse ensemble toutes les pistes du dossier (leurs réglages restent) · double-clic : 0 dB")); }
         }
-        else masterTap = std::make_unique<MasterLevelTap> (ctx);
+        else
+        {
+            masterTap = std::make_unique<MasterLevelTap> (ctx);
+            for (auto& p : ctx.edit->getMasterPluginList().getPlugins())
+                if (auto* m = dynamic_cast<ondefx::MasterMeterPlugin*> (p)) analysis = m;
+            styleStateButton (monoBtn, theme::accent); styleStateButton (dimBtn, theme::mute);
+            styleButton (resetBtn);
+            monoBtn.setTooltip (U ("Écouter le mix en mono (vérifie la compatibilité) · n'agit pas sur l'export"));
+            dimBtn.setTooltip (U ("Baisser l'écoute de 20 dB · n'agit pas sur l'export"));
+            resetBtn.setTooltip (U ("Remettre à zéro la sonie intégrée et la crête maximale"));
+            monoBtn.onClick = [this] { if (analysis) analysis->monoListen = monoBtn.getToggleState(); };
+            dimBtn.onClick = [this] { if (analysis) analysis->dimListen = dimBtn.getToggleState(); };
+            resetBtn.onClick = [this] { if (analysis) analysis->resetMeasurements(); };
+            for (auto* b : { &monoBtn, &dimBtn, &resetBtn }) addAndMakeVisible (*b);
+        }
         sync();
     }
 
@@ -135,6 +157,16 @@ public:
             mute.setToggleState (group->isMuted (false), juce::dontSendNotification);
             solo.setToggleState (group->isSolo (false), juce::dontSendNotification);
         }
+        if (volumePlugin != nullptr && phase.isVisible()) phase.setToggleState (volumePlugin->polarity.get(), juce::dontSendNotification);
+        if (analysis != nullptr)
+        {
+            monoBtn.setToggleState (analysis->monoListen.load(), juce::dontSendNotification);
+            dimBtn.setToggleState (analysis->dimListen.load(), juce::dontSendNotification);
+            const int key = juce::roundToInt (analysis->momentary.load() * 10) ^ (juce::roundToInt (analysis->shortTerm.load() * 10) << 10)
+                          ^ (juce::roundToInt (analysis->integrated.load() * 10) << 20) ^ (juce::roundToInt (analysis->truePeakMax.load() * 10) << 5)
+                          ^ (juce::roundToInt (analysis->correlation.load() * 50) << 15);
+            if (key != shownAnalysisKey) { shownAnalysisKey = key; repaint (analysisArea); }
+        }
         if (masterTap) { const auto lv = masterTap->read(); meter.setLevels (lv.first, lv.second); }
         else meter.setLevels (client.getAndClearAudioLevel (0).dB, client.getAndClearAudioLevel (1).dB);
         // Valeurs (volume, crête) : redessinées seulement si le texte affiché change.
@@ -149,6 +181,19 @@ public:
         r.removeFromTop (4);
         insertsTop = r.getY();
         r.removeFromTop (14);
+        if (track == nullptr && group == nullptr)
+        {
+            analysisArea = r.removeFromTop (150);
+            r.removeFromTop (4);
+            auto row = r.removeFromTop (20);
+            const int w = (row.getWidth() - 4) / 3;
+            monoBtn.setBounds (row.removeFromLeft (w)); row.removeFromLeft (2);
+            dimBtn.setBounds (row.removeFromLeft (w)); row.removeFromLeft (2);
+            resetBtn.setBounds (row);
+            r.removeFromTop (8);
+        }
+        else
+        {
         // Le rack d'inserts s'adapte à la hauteur : le fader garde au moins 160 px.
         const int rackRows = juce::jlimit (1, 8, (getHeight() - 150 - 160) / 20);
         for (int i = 0; i < slots.size(); ++i)
@@ -159,8 +204,13 @@ public:
         if (track) { addBtn.setVisible (slots.size() < rackRows + 1); if (addBtn.isVisible()) addBtn.setBounds (r.removeFromTop (18)); }
         for (int i = slots.size() + 1; i <= rackRows; ++i) r.removeFromTop (20);
         if (! track) r.removeFromTop (18);
+        }
         r.removeFromTop (8);
-        pan.setBounds (r.removeFromTop (14));
+        {
+            auto pr = r.removeFromTop (14);
+            if (phase.isVisible()) { phase.setBounds (pr.removeFromRight (18).withSizeKeepingCentre (18, 16)); pr.removeFromRight (3); }
+            pan.setBounds (pr);
+        }
         r.removeFromTop (6);
         auto states = r.removeFromTop (20);
         if (track)
@@ -178,6 +228,7 @@ public:
         valueArea = r.removeFromBottom (20);
         r.removeFromBottom (4);
         auto f = r.reduced (2, 0);
+        if (track == nullptr && group == nullptr) f = f.withSizeKeepingCentre (juce::jmin (f.getWidth(), 92), f.getHeight());
         meter.setBounds (f.removeFromRight (12).reduced (0, 10));
         f.removeFromRight (4);
         scaleArea = f.removeFromRight (20);
@@ -192,7 +243,8 @@ public:
         g.setColour (selected ? juce::Colour (0xff3a3f46) : master ? juce::Colour (0xff30343a) : theme::panel); g.fillRect (r);
         g.setColour (theme::line); g.drawVerticalLine (getWidth() - 1, 0.0f, (float) getHeight());
         g.setColour (theme::muted); g.setFont (theme::ui (10.0f, true));
-        g.drawText ("INSERTS", 6, insertsTop, getWidth() - 12, 12, juce::Justification::centredLeft);
+        g.drawText (master ? "ANALYSE DU MIX" : "INSERTS", 6, insertsTop, getWidth() - 12, 12, juce::Justification::centredLeft);
+        if (master) paintAnalysis (g);
 
         // Graduation du fader.
         g.setFont (theme::ui (9.0f));
@@ -235,6 +287,50 @@ public:
         }
     }
 
+    // Analyse du mix : sonie EBU R128 (intégrée en grand), crête vraie maximale, corrélation de phase.
+    void paintAnalysis (juce::Graphics& g)
+    {
+        auto a = analysisArea.reduced (2, 0);
+        theme::bevel (g, a.toFloat(), theme::display, 3.0f);
+        a.reduce (8, 6);
+        if (analysis == nullptr) { g.setColour (theme::dim); g.setFont (theme::ui (10.5f)); g.drawFittedText (U ("Analyse indisponible"), a, juce::Justification::centred, 2); return; }
+        auto lu = [] (float v) { return v <= -69.9f ? U ("—") : juce::String (v, 1); };
+        const float I = analysis->integrated.load(), M = analysis->momentary.load(), S = analysis->shortTerm.load();
+        const float tp = analysis->truePeakMax.load(), corr = analysis->correlation.load();
+        g.setColour (theme::muted); g.setFont (theme::ui (9.5f, true));
+        g.drawText (U ("SONIE INTÉGRÉE"), a.removeFromTop (12), juce::Justification::centredLeft);
+        auto big = a.removeFromTop (30);
+        g.setColour (theme::lcd); g.setFont (theme::mono (24.0f));
+        g.drawText (lu (I), big, juce::Justification::centredLeft);
+        g.setColour (theme::dim); g.setFont (theme::ui (10.0f));
+        g.drawText ("LUFS", big, juce::Justification::bottomRight);
+        a.removeFromTop (4);
+        auto row = [&] (const juce::String& name, const juce::String& val, juce::Colour c)
+        {
+            auto rr = a.removeFromTop (15);
+            g.setColour (theme::dim); g.setFont (theme::ui (10.0f)); g.drawText (name, rr, juce::Justification::centredLeft);
+            g.setColour (c); g.setFont (theme::mono (10.5f)); g.drawText (val, rr, juce::Justification::centredRight);
+        };
+        row (U ("Momentanée"), lu (M) + " LU", theme::text);
+        row (U ("Court terme"), lu (S) + " LU", theme::text);
+        row (U ("Crête vraie max."), tp < -90.0f ? U ("—") : (tp > 0 ? "+" : "") + juce::String (tp, 1) + " dBTP", tp > -1.0f ? theme::rec : theme::text);
+        a.removeFromTop (5);
+        g.setColour (theme::dim); g.setFont (theme::ui (10.0f));
+        auto cr = a.removeFromTop (13);
+        g.drawText (U ("Corrélation"), cr, juce::Justification::centredLeft);
+        g.setColour (corr < 0.0f ? theme::rec : corr < 0.3f ? theme::warn : theme::text); g.setFont (theme::mono (10.5f));
+        g.drawText ((corr >= 0 ? "+" : "") + juce::String (corr, 2), cr, juce::Justification::centredRight);
+        auto bar = a.removeFromTop (12).reduced (0, 3).toFloat();
+        g.setColour (theme::bg); g.fillRoundedRectangle (bar, 2.0f);
+        g.setColour (theme::lineBar); g.drawVerticalLine ((int) bar.getCentreX(), bar.getY() - 2, bar.getBottom() + 2);
+        const float x = bar.getX() + (juce::jlimit (-1.0f, 1.0f, corr) + 1.0f) * 0.5f * bar.getWidth();
+        const auto left = std::min (x, bar.getCentreX()), right = std::max (x, bar.getCentreX());
+        g.setColour (corr < 0.0f ? theme::rec : theme::accent); g.fillRect (juce::Rectangle<float> (left, bar.getY(), juce::jmax (2.0f, right - left), bar.getHeight()));
+        g.setColour (theme::muted); g.setFont (theme::ui (8.5f));
+        auto lbl = a.removeFromTop (11);
+        g.drawText ("-1", lbl, juce::Justification::centredLeft); g.drawText ("0", lbl, juce::Justification::centred); g.drawText ("+1", lbl, juce::Justification::centredRight);
+    }
+
     void mouseDown (const juce::MouseEvent&) override { if (track) ctx.selectTrack (track); else if (group) ctx.selectFolder (group); }
 
     te::AudioTrack* track;
@@ -245,6 +341,10 @@ private:
     te::VCAPlugin* vca = nullptr;
     juce::Slider fader, pan;
     StereoMeter meter;
+    juce::TextButton phase { U ("Ø") }, monoBtn { "Mono" }, dimBtn { "-20 dB" }, resetBtn { U ("Réinit.") };
+    ondefx::MasterMeterPlugin* analysis = nullptr;
+    juce::Rectangle<int> analysisArea;
+    int shownAnalysisKey = 0;
     juce::TextButton mute { "M" }, solo { "S" }, arm { U ("●") }, mon { U ("◉") }, addBtn { "+ Insert" };
     juce::OwnedArray<juce::TextButton> slots;
     te::LevelMeasurer* measurer = nullptr;
@@ -319,8 +419,8 @@ void MixerView::resized()
     {
         const bool master = i == strips.size() - 1;
         if (master) x += 10;
-        strips[i]->setBounds (x, 0, master ? 110 : 96, h);
-        x += master ? 110 : 96;
+        strips[i]->setBounds (x, 0, master ? 200 : 96, h);
+        x += master ? 200 : 96;
     }
     content.setSize (juce::jmax (x, viewport.getWidth()), h);
 }
