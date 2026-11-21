@@ -309,6 +309,13 @@ public:
         g.setColour (col); g.fillRect (ind, 0, 5, h);
         g.setColour (selected ? theme::text : theme::muted); g.setFont (theme::ui (11.0f));
         g.drawText (juce::String (ctx.trackNumber (track)), ind + 8, 4, 22, 20, juce::Justification::centred);
+        if (track.isFrozen (te::Track::individualFreeze))
+        {
+            // Piste gelée : voile bleuté et flocon, son figé (dégeler pour la modifier).
+            g.setColour (juce::Colour (0xff6fb8ff).withAlpha (0.12f)); g.fillRect (header);
+            g.setColour (juce::Colour (0xff9fd0ff)); g.setFont (theme::ui (12.0f, true));
+            g.drawText (U ("❄"), ind + 8, h - 22, 22, 18, juce::Justification::centred);
+        }
         // Icône du type de piste.
         {
             auto ic = juce::Rectangle<float> ((float) juce::jmin (ind, 40) + 12.0f, 31.0f, 12.0f, 12.0f);
@@ -934,6 +941,7 @@ public:
         m.addItem (1, "Renommer");
         m.addItem (2, U ("Afficher l'automation"), true, autoShown());
         m.addItem (9, U ("Modulateurs de la piste…"));
+        m.addItem (10, track.isFrozen (te::Track::individualFreeze) ? U ("Dégeler la piste") : U ("Geler la piste (libère le processeur)"));
         m.addSeparator();
         m.addItem (3, U ("Ajouter une piste audio"));
         m.addItem (4, U ("Ajouter une piste instrument"));
@@ -955,6 +963,7 @@ public:
             if (r == 1) nameLabel.showEditor();
             if (r == 2) ctx.toggleAutomation (track);
             if (r == 9) { ctx.selectTrack (&track); ctx.perform ("track.modulators"); }
+            if (r == 10) { ctx.selectTrack (&track); ctx.perform ("track.freeze"); }
             if (r == 3) ctx.perform ("track.addAudio");
             if (r == 4) ctx.perform ("track.addInst");
             if (r == 5) ctx.perform ("track.delete");
@@ -1310,15 +1319,20 @@ public:
         muteBtn.onClick = [this] { folder.setMute (muteBtn.getToggleState()); ctx.changed(); };
         soloBtn.onClick = [this] { folder.setSolo (soloBtn.getToggleState()); ctx.changed(); };
         addAndMakeVisible (muteBtn); addAndMakeVisible (soloBtn);
-        if (folder.isSubmixFolder())
+        if (folder.isSubmixFolder() || folder.getVCAPlugin() != nullptr)
         {
             volume.setSliderStyle (juce::Slider::LinearHorizontal);
             volume.setTextBoxStyle (juce::Slider::NoTextBox, false, 0, 0);
             volume.setRange (-60.0, 6.0, 0.1); volume.setSkewFactorFromMidPoint (-12.0); volume.setDoubleClickReturnValue (true, 0.0);
             volume.setWantsKeyboardFocus (false);
-            volume.setTooltip (U ("Volume du groupe (toutes les pistes du dossier passent par lui) · double-clic : 0 dB"));
-            volume.onDragStart = [this] { ctx.edit->getUndoManager().beginNewTransaction (U ("Volume du groupe")); };
-            volume.onValueChange = [this] { if (auto* v = folder.getVolumePlugin()) v->setVolumeDb ((float) volume.getValue()); };
+            volume.setTooltip (folder.isSubmixFolder() ? U ("Volume du groupe (toutes les pistes du dossier passent par lui) · double-clic : 0 dB")
+                                                       : U ("VCA : monte ou baisse ensemble les pistes du dossier, leurs réglages restent · double-clic : 0 dB"));
+            volume.onDragStart = [this] { ctx.edit->getUndoManager().beginNewTransaction (folder.isSubmixFolder() ? U ("Volume du groupe") : U ("VCA")); };
+            volume.onValueChange = [this]
+            {
+                if (! folder.isSubmixFolder()) { if (auto* vca = folder.getVCAPlugin()) vca->setVolumeDb ((float) volume.getValue()); }
+                else if (auto* v = folder.getVolumePlugin()) v->setVolumeDb ((float) volume.getValue());
+            };
             addAndMakeVisible (volume);
         }
         sync();
@@ -1332,7 +1346,11 @@ public:
         muteBtn.setToggleState (folder.isMuted (false), juce::dontSendNotification);
         soloBtn.setToggleState (folder.isSolo (false), juce::dontSendNotification);
         if (! nameLabel.isBeingEdited()) nameLabel.setText (folder.getName(), juce::dontSendNotification);
-        if (auto* v = folder.getVolumePlugin()) if (! volume.isMouseButtonDown()) volume.setValue (v->getVolumeDb(), juce::dontSendNotification);
+        if (! volume.isMouseButtonDown())
+        {
+            if (! folder.isSubmixFolder()) { if (auto* vca = folder.getVCAPlugin()) volume.setValue (vca->getVolumeDb(), juce::dontSendNotification); }
+            else if (auto* v = folder.getVolumePlugin()) volume.setValue (v->getVolumeDb(), juce::dontSendNotification);
+        }
     }
 
     int indent() const { return depth * indentW; }
@@ -1344,7 +1362,7 @@ public:
         nameLabel.setBounds (x0, 3, headerW - x0 - 64, 20);
         muteBtn.setBounds (headerW - 58, 4, 22, 18);
         soloBtn.setBounds (headerW - 33, 4, 22, 18);
-        if (folder.isSubmixFolder()) volume.setBounds (x0, 24, headerW - x0 - 70, 16);
+        if (folder.isSubmixFolder() || folder.getVCAPlugin() != nullptr) volume.setBounds (x0, 24, headerW - x0 - 70, 16);
     }
 
     void paint (juce::Graphics& g) override
@@ -1367,8 +1385,17 @@ public:
         const auto subs = folder.getAllAudioSubTracks (true);
         g.setColour (theme::dim); g.setFont (theme::ui (10.5f));
         if (! folder.isSubmixFolder())
-            g.drawText (juce::String (subs.size()) + (subs.size() > 1 ? " pistes" : " piste") + (ctx.isCollapsed (folder) ? U (" (replié)") : juce::String()),
-                        indent() + 30, 24, headerW - indent() - 40, 16, juce::Justification::centredLeft);
+        {
+            // Dossier simple : fader VCA ; le nombre de pistes passe dans la bulle d'aide du nom.
+            if (auto* vca = folder.getVCAPlugin())
+            {
+                g.setColour (theme::lcd); g.setFont (theme::mono (10.5f));
+                g.drawText ("VCA " + juce::String (vca->getVolumeDb(), 1), headerW - 70, 24, 64, 16, juce::Justification::centredRight);
+            }
+            else
+                g.drawText (juce::String (subs.size()) + (subs.size() > 1 ? " pistes" : " piste") + (ctx.isCollapsed (folder) ? U (" (replié)") : juce::String()),
+                            indent() + 30, 24, headerW - indent() - 40, 16, juce::Justification::centredLeft);
+        }
         else if (auto* v = folder.getVolumePlugin())
         {
             g.setColour (theme::lcd); g.setFont (theme::mono (10.5f));

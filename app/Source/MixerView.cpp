@@ -8,6 +8,8 @@ public:
     Strip (EditContext& c, te::AudioTrack* t, te::FolderTrack* g = nullptr) : track (t), group (g), ctx (c)
     {
         volumePlugin = track ? track->getVolumePlugin() : group ? group->getVolumePlugin() : ctx.edit->getMasterVolumePlugin().get();
+        // Dossier simple : fader VCA (pilote le volume des pistes du dossier sans additionner leur son).
+        if (group != nullptr && ! group->isSubmixFolder()) vca = group->getVCAPlugin();
 
         addAndMakeVisible (fader);
         fader.setSliderStyle (juce::Slider::LinearVertical);
@@ -18,7 +20,7 @@ public:
         fader.setWantsKeyboardFocus (false);
         fader.setTooltip (U ("Volume · double-clic : 0 dB"));
         fader.onDragStart = [this] { ctx.edit->getUndoManager().beginNewTransaction (U ("Volume")); };
-        fader.onValueChange = [this] { if (volumePlugin) volumePlugin->setVolumeDb ((float) fader.getValue()); };
+        fader.onValueChange = [this] { if (vca) vca->setVolumeDb ((float) fader.getValue()); else if (volumePlugin) volumePlugin->setVolumeDb ((float) fader.getValue()); };
 
         addAndMakeVisible (pan);
         pan.setSliderStyle (juce::Slider::LinearBar);
@@ -57,7 +59,9 @@ public:
             mute.onClick = [this] { group->setMute (mute.getToggleState()); ctx.changed(); };
             solo.onClick = [this] { group->setSolo (solo.getToggleState()); ctx.changed(); };
             addAndMakeVisible (mute); addAndMakeVisible (solo);
-            if (auto* lm = EditContext::groupMeter (*group, false)) { meterPlugin = lm; measurer = &lm->measurer; measurer->addClient (client); }
+            if (vca == nullptr)
+                if (auto* lm = EditContext::groupMeter (*group, false)) { meterPlugin = lm; measurer = &lm->measurer; measurer->addClient (client); }
+            if (vca != nullptr) { pan.setVisible (false); meter.setVisible (false); fader.setTooltip (U ("VCA : monte ou baisse ensemble toutes les pistes du dossier (leurs réglages restent) · double-clic : 0 dB")); }
         }
         else masterTap = std::make_unique<MasterLevelTap> (ctx);
         sync();
@@ -113,7 +117,8 @@ public:
 
     void sync()
     {
-        if (volumePlugin)
+        if (vca != nullptr) { if (! fader.isMouseButtonDown()) fader.setValue (vca->getVolumeDb(), juce::dontSendNotification); }
+        else if (volumePlugin)
         {
             if (! fader.isMouseButtonDown()) fader.setValue (volumePlugin->getVolumeDb(), juce::dontSendNotification);
             if (! pan.isMouseButtonDown())   pan.setValue (volumePlugin->getPan(), juce::dontSendNotification);
@@ -133,7 +138,7 @@ public:
         if (masterTap) { const auto lv = masterTap->read(); meter.setLevels (lv.first, lv.second); }
         else meter.setLevels (client.getAndClearAudioLevel (0).dB, client.getAndClearAudioLevel (1).dB);
         // Valeurs (volume, crête) : redessinées seulement si le texte affiché change.
-        const double db = volumePlugin ? volumePlugin->getVolumeDb() : 0.0;
+        const double db = vca ? vca->getVolumeDb() : volumePlugin ? volumePlugin->getVolumeDb() : 0.0;
         const int key = juce::roundToInt (db * 10.0) * 100000 + juce::roundToInt (juce::jmax (-100.0f, meter.getPeak()) * 10.0f);
         if (key != shownValueKey) { shownValueKey = key; repaint (valueArea); }
     }
@@ -200,7 +205,7 @@ public:
         }
 
         // Valeurs : volume et crête.
-        const double db = volumePlugin ? volumePlugin->getVolumeDb() : 0.0;
+        const double db = vca ? vca->getVolumeDb() : volumePlugin ? volumePlugin->getVolumeDb() : 0.0;
         auto v = valueArea.reduced (2, 1);
         theme::bevel (g, v.toFloat(), theme::display, 2.0f);
         g.setFont (theme::mono (10.5f));
@@ -217,11 +222,11 @@ public:
         g.setColour (stripe); g.fillRect (n.removeFromBottom (5));
         g.setColour (selected ? juce::Colour (0xff4a5058) : juce::Colour (0xff26292d)); g.fillRect (n);
         g.setColour (theme::text); g.setFont (theme::ui (11.5f, true));
-        g.drawFittedText (named == nullptr ? juce::String ("Stereo Out") : named->getName(), n.reduced (3, 0), juce::Justification::centred, 1, 0.7f);
+        g.drawFittedText (named == nullptr ? U ("Sortie stéréo") : named->getName(), n.reduced (3, 0), juce::Justification::centred, 1, 0.7f);
         if (group != nullptr)
         {
             g.setColour (stripe); g.setFont (theme::ui (9.5f, true));
-            g.drawText ("GROUPE", n.reduced (3, 0), juce::Justification::topLeft);
+            g.drawText (vca != nullptr ? "VCA" : "GROUPE", n.reduced (3, 0), juce::Justification::topLeft);
         }
         if (track != nullptr)
         {
@@ -237,6 +242,7 @@ public:
 private:
     EditContext& ctx;
     te::VolumeAndPanPlugin* volumePlugin = nullptr;
+    te::VCAPlugin* vca = nullptr;
     juce::Slider fader, pan;
     StereoMeter meter;
     juce::TextButton mute { "M" }, solo { "S" }, arm { U ("●") }, mon { U ("◉") }, addBtn { "+ Insert" };
@@ -279,7 +285,7 @@ juce::String MixerView::signature() const
         }
     if (ctx.edit)
         for (auto* f : te::getTracksOfType<te::FolderTrack> (*ctx.edit, true))
-            if (f->isSubmixFolder()) s << "G" << f->itemID.toString() << f->getName() << ";";
+            if (f->isSubmixFolder() || f->getVCAPlugin() != nullptr) s << "G" << f->itemID.toString() << f->getName() << ";";
     return s;
 }
 
@@ -292,7 +298,7 @@ void MixerView::rebuild()
     for (auto* t : te::getAudioTracks (*ctx.edit))
         content.addAndMakeVisible (strips.add (new Strip (ctx, t)));
     for (auto* f : te::getTracksOfType<te::FolderTrack> (*ctx.edit, true))     // pistes de groupe
-        if (f->isSubmixFolder()) content.addAndMakeVisible (strips.add (new Strip (ctx, nullptr, f)));
+        if (f->isSubmixFolder() || f->getVCAPlugin() != nullptr) content.addAndMakeVisible (strips.add (new Strip (ctx, nullptr, f)));    // groupes et VCA
     content.addAndMakeVisible (strips.add (new Strip (ctx, nullptr)));
     lastSig = sig;
     resized();

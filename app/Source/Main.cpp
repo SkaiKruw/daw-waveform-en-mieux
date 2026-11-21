@@ -2598,6 +2598,53 @@ private:
                 ed.deleteTrack (ccTrack);
                 c4.changed();
             }
+
+            // VCA : une piste dans un VCA à -12 dB sort 12 dB plus bas ; geler une piste garde son son.
+            {
+                auto* vcaSrc = c4.addAudioTrack();
+                vcaSrc->setName ("Source VCA");
+                vcaSrc->insertWaveClip ("fort", loud, { { te::TimePosition(), te::TimePosition::fromSeconds (4.0) }, te::TimeDuration() }, false);
+                auto renderOne = [&] (te::Track* tr, const char* name) { double r = 0; const auto f = dir.getChildFile (juce::String (name) + ".wav"); renderEdit (ed, f, { tr }); return readAll (f, r); };
+                const double before = toneDb (renderOne (vcaSrc, "vca-avant"), 48000, 1000);
+                c4.selectTrack (vcaSrc);
+                c4.perform ("track.addVCA");
+                pump (300);
+                auto* vcaFolder = vcaSrc->getParentFolderTrack();
+                double after = 0;
+                if (vcaFolder != nullptr && vcaFolder->getVCAPlugin() != nullptr)
+                {
+                    vcaFolder->getVCAPlugin()->setVolumeDb (-12.0f);
+                    pump (200);
+                    after = toneDb (renderOne (vcaSrc, "vca-moins-12"), 48000, 1000);
+                }
+                check (vcaFolder != nullptr && vcaFolder->getVCAPlugin() != nullptr && std::abs ((after - before) + 12.0) < 0.3 && std::abs (vcaSrc->getVolumePlugin()->getVolumeDb()) < 0.01,
+                       U ("VCA : fader du dossier à -12 dB → la piste sort ") + juce::String (after - before, 2) + U (" dB, son propre fader reste à 0 dB"));
+                c4.changed();
+                pump (300);
+                snapshot (*mc, dir.getChildFile ("26-vca.png"));
+
+                // Geler : une piste Onde Synth figée en audio, même son ; dégeler la rend modifiable.
+                auto* frozenTrack = LibraryPanel::applyToTrack (c4, nullptr, *ondefx::SynthPlugin::findPreset (U ("Piano électrique")));
+                auto fclip = frozenTrack->insertMIDIClip ("gel", { te::TimePosition(), te::TimePosition::fromSeconds (3.0) }, nullptr);
+                for (int p : { 57, 60, 64, 67 }) fclip->getSequence().addNote (p, te::BeatPosition(), te::BeatDuration::fromBeats (3.0), 100, 0, nullptr);
+                const auto live = renderOne (frozenTrack, "gel-avant");
+                c4.selectTrack (frozenTrack);
+                c4.perform ("track.freeze");
+                pump (500);
+                const bool frozen = frozenTrack->isFrozen (te::Track::individualFreeze);
+                const auto frozenBuf = renderOne (frozenTrack, "gel-apres");
+                const double liveDb = juce::Decibels::gainToDecibels (live.getRMSLevel (0, 0, 96000), -120.0f);
+                const double frozenDb = juce::Decibels::gainToDecibels (frozenBuf.getRMSLevel (0, 0, 96000), -120.0f);
+                c4.perform ("track.freeze");
+                pump (300);
+                const bool thawed = ! frozenTrack->isFrozen (te::Track::individualFreeze);
+                check (frozen && std::abs (liveDb - frozenDb) < 1.0 && liveDb > -40.0 && thawed,
+                       U ("geler : piste gelée (") + juce::String (frozen ? "oui" : "non") + U ("), même son : ") + juce::String (liveDb, 1) + U (" dB avant, ")
+                       + juce::String (frozenDb, 1) + U (" dB gelée ; dégelée (") + juce::String (thawed ? "oui" : "non") + ")");
+                ed.deleteTrack (frozenTrack);
+                if (vcaFolder != nullptr) ed.deleteTrack (vcaFolder);
+                c4.changed();
+            }
         }
 
         std::printf ("\n%s\n", failures == 0 ? "INTERFACE OK — toutes les vérifications passent." : "DES VÉRIFICATIONS ÉCHOUENT");

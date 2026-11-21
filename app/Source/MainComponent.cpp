@@ -362,6 +362,30 @@ void MainComponent::registerActions()
     {
         if (edit) NewTrackPanel::show (ctx);
     });
+    ctx.addAction ("track.addVCA", U ("Ajouter une piste › VCA (pilote le volume de plusieurs pistes)"), "Projet", {}, [this]
+    {
+        if (! edit) return;
+        edit->getUndoManager().beginNewTransaction (U ("Ajouter un VCA"));
+        if (auto* f = ctx.addFolderTrack (false, true))
+        {
+            static int vcaCount = 0;
+            f->setName ("VCA " + juce::String (++vcaCount));
+            f->setColour (juce::Colour (0xffa65fc8));
+            setStatus (U ("VCA créé : glissez-y les pistes à piloter ensemble, puis réglez son fader"));
+        }
+    });
+    ctx.addAction ("track.freeze", U ("Geler / dégeler la piste (fige ses instruments et effets, libère le processeur)"), "Projet", KP ('f', ctrl | alt, 0), [this]
+    {
+        auto* t = ctx.getSelectedTrack();
+        if (t == nullptr) { setStatus (U ("Sélectionnez la piste à geler")); return; }
+        const bool freeze = ! t->isFrozen (te::Track::individualFreeze);
+        setStatus (freeze ? U ("Gel de « ") + t->getName() + U (" » en cours…") : U ("Dégel…"));
+        const auto r = t->setFrozen (freeze, te::Track::individualFreeze);
+        if (r.failed()) setStatus (U ("Gel impossible : ") + r.getErrorMessage());
+        else setStatus (freeze ? U ("« ") + t->getName() + U (" » est gelée : son figé, instruments et effets au repos (dégeler pour les modifier)")
+                               : U ("« ") + t->getName() + U (" » est dégelée"));
+        ctx.changed();
+    });
     ctx.addAction ("track.addAudio", U ("Ajouter une piste › Audio"), "Projet", KP ('t', ctrl, 0), [this] { if (edit) { edit->getUndoManager().beginNewTransaction(); ctx.addAudioTrack(); } });
     ctx.addAction ("track.addInst", U ("Ajouter une piste › Instrument"), "Projet", KP ('t', ctrl | shift, 0), [this] { if (edit) { edit->getUndoManager().beginNewTransaction(); ctx.addInstrumentTrack(); } });
     ctx.addAction ("track.addFx", U ("Ajouter une piste › FX (bus d'effet, réverbération)"), "Projet", {}, [this]
