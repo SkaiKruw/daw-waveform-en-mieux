@@ -36,7 +36,7 @@ que les utilisateurs mettent en avant dans les tests de logiciels et de plugins.
 | Éditeur de batterie, piste de batterie, boîte à rythmes | 🟡 | Batteur automatique (6 styles), modifiable note à note |
 | Séquenceur de motifs | ❌ | |
 | Éditeur de partition | 🟡 | tablature avec portée dans la clé de l'instrument (sol, sol octaviée, fa, ut), accordage libre ; pas encore d'éditeur de partition complet (rythmes, impression) |
-| Échantillonneur (piste sampler) | ❌ | |
+| Échantillonneur (piste sampler) | ✅ | Onde Échantillonneur : SFZ, couches, variations, relâchement, articulations ; bibliothèques libres téléchargeables |
 | Instruments intégrés | ✅ | Onde Synth (5 moteurs dont cordes pincées en modèle physique, 46 sons), 4OSC ; VST3 isolés |
 
 ## Mixage et effets
@@ -83,7 +83,7 @@ que les utilisateurs mettent en avant dans les tests de logiciels et de plugins.
 6. Piste d'arrangement.
 7. ~~Effets Onde : réverbération, delay, saturation, modulation~~ : fait. Reste : de-esser, gate.
 8. ~~Paramètres, modèles personnels, fenêtre d'instrument redessinée~~ : fait.
-9. Instruments échantillonnés (piano, batterie, cordes enregistrés) en packs téléchargeables à la demande, hors installateur.
+9. ~~Instruments enregistrés : Onde Échantillonneur (SFZ) et catalogue de bibliothèques libres à télécharger~~ : fait. Ensuite : vérifier chaque bibliothèque du catalogue, legato et fondus entre couches (xfin/xfout).
 10. Batteur qui suit la piste d'arrangement ; ampli : réponses de baffles enregistrées (impulsions) en option.
 11. Version macOS : première compilation sur GitHub, puis essais sur un Mac.
 

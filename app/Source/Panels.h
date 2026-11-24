@@ -210,6 +210,8 @@ private:
     EditContext& ctx;
     juce::OwnedArray<IconButton> buttons;
     std::unique_ptr<IconButton> clickBtn, punchInBtn, punchOutBtn;
+    juce::TextButton countInBtn;                     // décompte avant l'enregistrement (direct, 1 ou 2 mesures…)
+    void showCountInMenu();
     StereoMeter outMeter { false };
     MasterLevelTap master { ctx };
     juce::Rectangle<int> perfArea, locL, locR, display, tempoArea, sigArea;

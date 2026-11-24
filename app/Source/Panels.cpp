@@ -1110,6 +1110,19 @@ TransportPanel::TransportPanel (EditContext& c) : ctx (c)
     punchInBtn = std::make_unique<IconButton> (U ("Punch : n'enregistre qu'entre les délimiteurs gauche et droit"), icons::punch (true), theme::rec);
     punchInBtn->onClick = [this] { if (ctx.edit) ctx.edit->recordingPunchInOut = ! ctx.edit->recordingPunchInOut.get(); };
     addAndMakeVisible (*clickBtn); addAndMakeVisible (*punchInBtn);
+    countInBtn.setTooltip (U ("Décompte avant l'enregistrement : clic pour passer de « direct » à 1 puis 2 mesures · clic droit : tous les choix"));
+    countInBtn.setColour (juce::TextButton::buttonColourId, juce::Colour (0xff23262b));
+    countInBtn.setColour (juce::TextButton::textColourOffId, theme::text);
+    countInBtn.setWantsKeyboardFocus (false);
+    countInBtn.onClick = [this]
+    {
+        if (ctx.edit == nullptr) return;
+        if (juce::ModifierKeys::currentModifiers.isPopupMenu()) { showCountInMenu(); return; }
+        const auto m = ctx.edit->getCountInMode();
+        const auto next = m == te::Edit::CountIn::none ? te::Edit::CountIn::oneBar : m == te::Edit::CountIn::oneBar ? te::Edit::CountIn::twoBar : te::Edit::CountIn::none;
+        ctx.perform (next == te::Edit::CountIn::none ? "transport.countIn0" : next == te::Edit::CountIn::oneBar ? "transport.countIn1" : "transport.countIn2");
+    };
+    addAndMakeVisible (countInBtn);
     addAndMakeVisible (outMeter);
     startTimerHz (25);
 }
@@ -1163,6 +1176,13 @@ void TransportPanel::timerCallback()
     buttons[6]->setActive (t.isPlaying() && ! t.isRecording());
     buttons[7]->setActive (t.isRecording());
     clickBtn->setActive (ctx.edit->clickTrackEnabled.get());
+    {
+        const auto m = ctx.edit->getCountInMode();
+        const juce::String t = m == te::Edit::CountIn::none ? U ("Direct") : m == te::Edit::CountIn::oneBar ? U ("1 mes.") : m == te::Edit::CountIn::twoBar ? U ("2 mes.")
+                             : m == te::Edit::CountIn::twoBeat ? U ("2 temps") : U ("1 temps");
+        if (countInBtn.getButtonText() != t) countInBtn.setButtonText (t);
+        countInBtn.setColour (juce::TextButton::textColourOffId, m == te::Edit::CountIn::none ? theme::muted : theme::rec);
+    }
     punchInBtn->setActive (ctx.edit->recordingPunchInOut.get());
 
     const auto lv = master.read();
@@ -1184,6 +1204,8 @@ void TransportPanel::resized()
     punchInBtn->setBounds (r.removeFromLeft (30).withSizeKeepingCentre (30, 30));
     r.removeFromLeft (14);
     for (auto* b : buttons) { b->setBounds (r.removeFromLeft (b == buttons[6] || b == buttons[7] ? 40 : 34).withSizeKeepingCentre (b == buttons[6] || b == buttons[7] ? 40 : 32, 34)); r.removeFromLeft (2); }
+    r.removeFromLeft (4);
+    countInBtn.setBounds (r.removeFromLeft (62).withSizeKeepingCentre (62, 26));
     r.removeFromLeft (14);
     display = r.removeFromLeft (240);
     r.removeFromLeft (12);
@@ -1324,3 +1346,15 @@ void TransportPanel::mouseDrag (const juce::MouseEvent& e)
 }
 
 void TransportPanel::mouseUp (const juce::MouseEvent&) { draggingTempo = false; }
+
+void TransportPanel::showCountInMenu()
+{
+    juce::PopupMenu m;
+    m.addSectionHeader (U ("Avant l'enregistrement"));
+    const char* ids[] = { "transport.countIn0", "transport.countIn1", "transport.countIn2", "transport.countInBeats2", "transport.countInBeats1" };
+    const char* names[] = { "Direct (aucun décompte)", "1 mesure de décompte", "2 mesures de décompte", "2 temps", "1 temps" };
+    const int modes[] = { 0, 1, 2, 3, 4 };
+    const int current = ctx.edit != nullptr ? (int) ctx.edit->getCountInMode() : 0;
+    for (int i = 0; i < 5; ++i) m.addItem (i + 1, U (names[i]), true, current == modes[i]);
+    m.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (&countInBtn), [this, ids] (int r) { if (r > 0) ctx.perform (ids[r - 1]); });
+}

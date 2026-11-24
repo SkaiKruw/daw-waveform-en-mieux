@@ -7,6 +7,8 @@
 #include "MainComponent.h"
 #include "Preferences.h"
 #include "Updater.h"
+#include "OndeSampler.h"
+#include "Libraries.h"
 #include "OndeSynth.h"
 #include "OndeFx2.h"
 #include "Chains.h"
@@ -285,6 +287,10 @@ namespace
             aligned = aligned && k->getClips().size() == 1
                       && std::abs (k->getClips()[0]->getPosition().getStart().inSeconds() - startAt) < 1e-6
                       && std::abs (k->getClips()[0]->getPosition().getLength().inSeconds() - demo::songSeconds()) < 1e-6;
+        for (auto* k : kids)
+            if (auto* wc = dynamic_cast<te::WaveAudioClip*> (k->getClips().getFirst()))
+                std::printf ("  info   : %s : source « %s » -> %s\n", k->getName().toRawUTF8(), wc->state["source"].toString().toRawUTF8(),
+                             wc->getAudioFile().getFile().getFullPathName().toRawUTF8());
         check (folder != nullptr && aligned && clip->isMuted() && te::getAudioTracks (*e2).size() == before + 4,
                U ("import : dossier « ") + (folder ? folder->getName() : juce::String()) + U (" » avec Voix, Batterie, Basse, Autres alignées, original muet"));
         const auto rendered = dir.getChildFile ("rendu-sources.wav");
@@ -294,11 +300,15 @@ namespace
             rp.bitDepth = 32; rp.sampleRateForAudio = 44100.0; rp.blockSizeForAudio = 512; rp.ditheringEnabled = false;
             rp.time = { te::TimePosition::fromSeconds (startAt), te::TimePosition::fromSeconds (startAt + demo::songSeconds()) };
             rp.usePlugins = true; rp.tracksToDo = te::toBitSet (te::getAllTracks (*e2));
+            rendered.deleteFile();
             EditContext::prepareAudioProxies (*e2, 60000);
-            te::Renderer::renderToFile ("Rendu", rp);
+            const bool renderedOk = te::Renderer::renderToFile ("Rendu", rp).existsAsFile();
+            std::printf ("  info   : rendu des sources : %s\n", renderedOk ? "écrit" : "ÉCHEC");
         }
         const auto played = readAll (rendered, rate);
         const double playSdr = sdr (mix, played);
+        std::printf ("  info   : rendu contre la somme des sources de cette séparation : %.1f dB (%d / %d échantillons)\n",
+                     sdr (sum, played), played.getNumSamples(), sum.getNumSamples());
         check (playSdr > 20.0, U ("le projet joue les 4 sources = le mix d'origine : ") + juce::String (playSdr, 1) + " dB");
         e2->getUndoManager().undo();
         check (te::getAudioTracks (*e2).size() == before && ! clip->isMuted(), U ("Annuler retire les sources et rend l'original audible"));
@@ -1845,6 +1855,21 @@ private:
             const auto saved = dir.getChildFile (U ("projet récent.onde"));
             check (mc->saveProjectTo (saved) && MainComponent::recentProjects()[0] == saved.getFullPathName(),
                    U ("un projet enregistré passe en tête des projets récents"));
+            {
+                const auto toastText = mc->getToast().getText();
+                pump (100);
+                snapshot (*mc, dir.getChildFile ("44-message-enregistre.png"));
+                // Décompte avant l'enregistrement : choisi d'un clic (bouton de la barre de transport, menu Transport).
+                mc->getContext().perform ("transport.countIn2");
+                const bool two = mc->getEdit()->getCountInMode() == te::Edit::CountIn::twoBar;
+                mc->getContext().perform ("transport.countIn1");
+                const bool one = mc->getEdit()->getCountInMode() == te::Edit::CountIn::oneBar && mc->getEdit()->getNumCountInBeats() == 4;
+                mc->getContext().perform ("transport.countIn0");
+                const bool none = mc->getEdit()->getCountInMode() == te::Edit::CountIn::none;
+                prefs::file().removeValue ("countIn");
+                check (toastText.startsWith (U ("Enregistré")) && two && one && none,
+                       U ("message « ") + toastText + U (" » à l'enregistrement ; décompte direct, 1 mesure (4 temps), 2 mesures"));
+            }
             HubPanel hubPanel (*mc);
             check (hubPanel.numRecent() >= 1, U ("l'écran d'accueil liste les projets récents (") + juce::String (hubPanel.numRecent()) + ")");
             pump (200);
@@ -2371,6 +2396,127 @@ private:
                         const float pk = ab.getMagnitude (0, 0, ab.getNumSamples());
                         check (pk > 0.01f && pk < 1.0f, U ("essai du son depuis la fenêtre de l'instrument : crête ") + juce::String (juce::Decibels::gainToDecibels (pk), 1) + " dBFS");
                     }
+
+            // Onde Échantillonneur : un petit instrument SFZ fabriqué ici (couches de vélocité, variations, relâchement,
+            // articulations), installé comme une bibliothèque téléchargée (archive zip), puis joué.
+            {
+                ondefx::librariesTestMode() = true;
+                const auto src = dir.getChildFile ("sfz-essai");
+                src.deleteRecursively();
+                src.getChildFile ("samples").createDirectory();
+                auto writeWave = [&] (const juce::String& name, std::function<float (double)> fn, double seconds)
+                {
+                    juce::AudioBuffer<float> b (1, (int) (44100 * seconds));
+                    for (int i = 0; i < b.getNumSamples(); ++i) b.setSample (0, i, fn (i / 44100.0));
+                    const auto f = src.getChildFile ("samples").getChildFile (name);
+                    juce::WavAudioFormat wav;
+                    if (auto os = std::unique_ptr<juce::OutputStream> (f.createOutputStream()))
+                        if (auto w = std::unique_ptr<juce::AudioFormatWriter> (wav.createWriterFor (os.get(), 44100.0, 1, 24, {}, 0))) { os.release(); w->writeFromAudioSampleBuffer (b, 0, b.getNumSamples()); }
+                };
+                const double c4 = 261.6255653, pi2 = juce::MathConstants<double>::twoPi;
+                writeWave ("doux C4.wav",  [&] (double t) { return (float) (0.2 * std::sin (pi2 * c4 * t)); }, 3.0);
+                writeWave ("fort1 C4.wav", [&] (double t) { return (float) (0.7 * std::sin (pi2 * c4 * t)); }, 3.0);
+                writeWave ("fort2 C4.wav", [&] (double t) { return (float) (0.7 * std::sin (pi2 * c4 * t) + 0.2 * std::sin (pi2 * c4 * 5.0 * t)); }, 3.0);
+                writeWave ("court C4.wav", [&] (double t) { return (float) (0.7 * std::sin (pi2 * c4 * t) * std::exp (-t * 20.0)); }, 1.0);
+                writeWave ("relache.wav",  [&] (double t) { return (float) (0.5 * std::sin (pi2 * 3000.0 * t) * std::exp (-t * 8.0)); }, 0.5);
+                src.getChildFile ("Essai cordes.sfz").replaceWithText (
+                    "// Instrument d'essai\n#define $CENTRE 60\n<control> default_path=samples/\n"
+                    "<global> ampeg_release=0.05\n"
+                    "<group> sw_last=c1 sw_label=Long lokey=36 hikey=96 pitch_keycenter=$CENTRE\n"
+                    "<region> sample=doux C4.wav hivel=64\n"
+                    "<region> sample=fort1 C4.wav lovel=65 seq_length=2 seq_position=1\n"
+                    "<region> sample=fort2 C4.wav lovel=65 seq_length=2 seq_position=2\n"
+                    "<group> sw_last=c#1 sw_label=Court lokey=36 hikey=96 pitch_keycenter=60 loop_mode=one_shot\n"
+                    "<region> sample=court C4.wav\n"
+                    "<group> trigger=release lokey=36 hikey=96 pitch_keycenter=60 volume=-6\n"
+                    "<region> sample=relache.wav\n");
+                // Archive façon GitHub (dossier racine), installée comme une bibliothèque du catalogue.
+                const auto zipFile = dir.getChildFile ("sfz-essai.zip");
+                zipFile.deleteFile();
+                {
+                    juce::ZipFile::Builder builder;
+                    for (const auto& e : juce::RangedDirectoryIterator (src, true, "*", juce::File::findFiles))
+                        builder.addFile (e.getFile(), 5, "essai-master/" + e.getFile().getRelativePathFrom (src).replaceCharacter ('\\', '/'));
+                    juce::FileOutputStream zos (zipFile);
+                    builder.writeToStream (zos, nullptr);
+                }
+                const auto& info = libraries::catalog().back();
+                const auto installed = libraries::installFromZip (info, zipFile);
+                const auto sfzFile = ondefx::findInstruments (libraries::folderFor (info)).getFirst();
+                const auto parsed = sfz::parse (sfzFile);
+                check (installed.wasOk() && parsed->regions.size() == 5 && parsed->articulations.joinIntoString (",") == "Long,Court"
+                       && parsed->regions[0].keycenter == 60 && parsed->regions[0].sample.existsAsFile(),
+                       U ("bibliothèque SFZ installée depuis une archive : ") + juce::String ((int) parsed->regions.size()) + U (" zones, articulations ")
+                       + parsed->articulations.joinIntoString (", ") + " " + installed.getErrorMessage());
+
+                auto samplerPtr = ed.getPluginCache().createNewPlugin (ondefx::SamplerPlugin::xmlTypeName, {});
+                auto* sampler = dynamic_cast<ondefx::SamplerPlugin*> (samplerPtr.get());
+                sampler->loadInstrument (sfzFile);
+                juce::MessageManager::getInstance()->runDispatchLoopUntil (50);
+                const bool loaded = sampler->waitUntilLoaded (10000) && sampler->getInstrument() != nullptr;
+                sampler->initialise ({ te::TimePosition(), 48000.0, 512 });
+                auto play = [&] (std::vector<std::tuple<double, int, int>> events, double seconds)    // (temps, note, vélocité ; 0 = relâcher)
+                {
+                    juce::AudioBuffer<float> b (2, (int) (48000 * seconds));
+                    b.clear();
+                    for (int s = 0; s < b.getNumSamples(); s += 512)
+                    {
+                        const int n = juce::jmin (512, b.getNumSamples() - s);
+                        te::MidiMessageArray midi;
+                        for (auto& [t, note, vel] : events)
+                        {
+                            const int at = (int) (t * 48000.0);
+                            if (at >= s && at < s + n)
+                                midi.addMidiMessage (vel > 0 ? juce::MidiMessage::noteOn (1, note, (juce::uint8) vel) : juce::MidiMessage::noteOff (1, note), (at - s) / 48000.0, {});
+                        }
+                        te::PluginRenderContext rc (&b, s, n, &midi, 0.0, {}, true, false, true, false);
+                        sampler->applyToBuffer (rc);
+                    }
+                    return b;
+                };
+                auto pitch = [] (const juce::AudioBuffer<float>& b, int from, int to)
+                {
+                    double first = -1, last = -1; int count = 0;
+                    for (int i = from + 1; i < juce::jmin (to, b.getNumSamples()); ++i)
+                    {
+                        const float a = b.getSample (0, i - 1), c = b.getSample (0, i);
+                        if (a < 0 && c >= 0) { const double t = i - 1 + a / (a - c); if (first < 0) first = t; last = t; ++count; }
+                    }
+                    return count > 1 ? (count - 1) * 48000.0 / (last - first) : 0.0;
+                };
+                auto rms = [] (const juce::AudioBuffer<float>& b, int from, int len) { return juce::Decibels::gainToDecibels (b.getRMSLevel (0, from, juce::jmin (len, b.getNumSamples() - from))); };
+                const auto d4 = play ({ { 0.0, 62, 110 }, { 1.0, 62, 0 } }, 1.5);
+                const double hz = pitch (d4, 4800, 40000);
+                const auto soft = play ({ { 0.0, 60, 30 }, { 1.0, 60, 0 } }, 1.2);
+                const float layerDiff = rms (d4, 4800, 24000) - rms (soft, 4800, 24000);
+                // Variations : deux notes fortes de suite n'ont pas le même timbre (5e harmonique sur la deuxième).
+                const auto rr = play ({ { 0.0, 60, 110 }, { 0.5, 60, 0 }, { 0.6, 60, 110 }, { 1.1, 60, 0 } }, 1.2);
+                auto h5 = [&] (int from) { const double w = pi2 * c4 * 5.0 / 48000.0, coeff = 2.0 * std::cos (w); double q1 = 0, q2 = 0;
+                                           for (int i = from; i < from + 9600; ++i) { const double q0 = coeff * q1 - q2 + rr.getSample (0, i); q2 = q1; q1 = q0; }
+                                           return 10.0 * std::log10 (std::max (1.0e-12, q1 * q1 + q2 * q2 - q1 * q2 * coeff)); };
+                const double rrDiff = h5 (int (0.65 * 48000)) - h5 (int (0.05 * 48000));
+                // Relâchement : un son aigu (3 kHz) après le relâchement de la note.
+                const auto rel = play ({ { 0.0, 60, 100 }, { 0.5, 60, 0 } }, 1.0);
+                const double hiAfter = [&] { const double w = pi2 * 3000.0 / 48000.0, coeff = 2.0 * std::cos (w); double q1 = 0, q2 = 0;
+                                             for (int i = 24400; i < 24400 + 4800; ++i) { const double q0 = coeff * q1 - q2 + rel.getSample (0, i); q2 = q1; q1 = q0; }
+                                             return 10.0 * std::log10 (std::max (1.0e-12, (q1 * q1 + q2 * q2 - q1 * q2 * coeff) / (4800.0 * 4800.0))); }();
+                // Articulation « Court » (touche Do#1 = 25) : le son s'éteint vite même si la note est tenue.
+                const auto shortArt = play ({ { 0.0, 25, 100 }, { 0.05, 60, 100 }, { 1.0, 60, 0 } }, 1.2);
+                const float shortTail = rms (shortArt, (int) (0.6 * 48000), 9600);
+                const auto longArt = play ({ { 0.0, 24, 100 }, { 0.05, 60, 100 }, { 1.0, 60, 0 } }, 1.2);
+                const float longTail = rms (longArt, (int) (0.6 * 48000), 9600);
+                check (loaded && std::abs (hz - 293.66) < 1.0 && layerDiff > 8.0f && std::abs (rrDiff) > 20.0 && hiAfter > -40.0 && longTail - shortTail > 30.0f,
+                       U ("Onde Échantillonneur : Ré 4 joué depuis l'échantillon de Do 4 à ") + juce::String (hz, 2) + U (" Hz ; couche forte +")
+                       + juce::String (layerDiff, 1) + U (" dB ; variation (round robin) ") + juce::String (std::abs (rrDiff), 0) + U (" dB ; relâchement ")
+                       + juce::String (hiAfter, 0) + U (" dB ; articulation courte ") + juce::String (shortTail - longTail, 0) + U (" dB à 0,6 s"));
+                if (auto e = ondefx::createEditor (*sampler)) { pump (300); snapshot (*e, dir.getChildFile ("45-echantillonneur.png")); }
+                {
+                    LibrariesPanel lp (mc->getContext());
+                    pump (100);
+                    snapshot (lp, dir.getChildFile ("46-bibliotheques.png"));
+                }
+                libraries::folderFor (info).deleteRecursively();
+            }
 
                     // Cordes pincées (modèle physique) : justesse du grave de la 8 cordes à l'aigu, la corde résonne puis s'éteint.
                     {

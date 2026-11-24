@@ -2,6 +2,8 @@
 #include "OndeFx2.h"
 #include "Preferences.h"
 #include "Updater.h"
+#include "Libraries.h"
+#include "OndeSampler.h"
 #include "ParamControls.h"
 #include "DemoContent.h"
 #include "OndeSynth.h"
@@ -63,12 +65,14 @@ MainComponent::MainComponent (te::Engine& e, PluginCatalog& c) : engine (e), cat
     // Entrées audio : une par prise (micro sur 1, guitare sur 2), réappliqué quand la carte son change.
     ctx.useMonoInputs (prefs::monoInputs());
     prefs::applyClickSound (engine);
+    ondefx::openLibrariesHook() = [this] { ctx.perform ("midi.libraries"); };
     if (! testMode && updates::shouldCheckToday())
         juce::Timer::callAfterDelay (4000, [safe = juce::Component::SafePointer<MainComponent> (this)] { if (safe) safe->checkForUpdates (false); });
     engine.getDeviceManager().addChangeListener (this);
     // Fenêtres d'outil flottantes : leurs touches non utilisées déclenchent les raccourcis d'Onde.
     ondeui::globalShortcuts() = [this] (const juce::KeyPress& k) { return ctx.performShortcut (k); };
     addAndMakeVisible (menuBar);
+    addChildComponent (toast);
     addAndMakeVisible (toolbar);
     addAndMakeVisible (infoLine);
     addAndMakeVisible (inspector);
@@ -130,6 +134,8 @@ MainComponent::~MainComponent()
     onde::trace ("~MainComponent: début");
     if (edit != nullptr) edit->getUndoManager().removeChangeListener (this);
     if (preferencesWindow != nullptr) delete preferencesWindow.getComponent();
+    if (librariesWindow != nullptr) delete librariesWindow.getComponent();
+    ondefx::openLibrariesHook() = nullptr;
     if (remoteWindow != nullptr) delete remoteWindow.getComponent();
     if (hubWindow != nullptr) delete hubWindow.getComponent();
     if (historyWindow != nullptr) delete historyWindow.getComponent();
@@ -646,6 +652,20 @@ void MainComponent::registerActions()
         setStatus (edit->clickTrackEnabled ? U ("Métronome activé") : U ("Métronome désactivé"));
     });
     click->isTicked = [this] { return edit && edit->clickTrackEnabled.get(); };
+    {
+        const char* ids[] = { "transport.countIn0", "transport.countIn1", "transport.countIn2", "transport.countInBeats2", "transport.countInBeats1" };
+        const char* names[] = { "Enregistrement : direct (sans décompte)", "Enregistrement : 1 mesure de décompte", "Enregistrement : 2 mesures de décompte",
+                                "Enregistrement : 2 temps de décompte", "Enregistrement : 1 temps de décompte" };
+        const te::Edit::CountIn modes[] = { te::Edit::CountIn::none, te::Edit::CountIn::oneBar, te::Edit::CountIn::twoBar, te::Edit::CountIn::twoBeat, te::Edit::CountIn::oneBeat };
+        for (int i = 0; i < 5; ++i)
+            ctx.addAction (ids[i], U (names[i]), "Transport", {}, [this, m = modes[i], n = juce::String (names[i])]
+            {
+                if (! edit) return;
+                edit->setCountInMode (m);
+                prefs::file().setValue ("countIn", (int) m);
+                setStatus (U (n.toRawUTF8()));
+            });
+    }
     ctx.addAction ("transport.clickSettings", U ("Réglages du métronome (son, volume, décompte)…"), "Transport", {}, [this] { showPreferences (SettingsPanel::metronomeTab); });
     ctx.addAction ("transport.home", U ("Aller au début du projet"), "Transport", KP (KP::homeKey), [tr] { if (auto* t = tr()) t->setPosition (te::TimePosition()); })->separatorBefore = true;
     ctx.addAction ("transport.end", U ("Aller à la fin du projet"), "Transport", KP (KP::endKey), [this, tr] { if (auto* t = tr()) t->setPosition (te::TimePosition() + edit->getLength()); });
@@ -760,6 +780,11 @@ void MainComponent::registerActions()
     // --- Aide
     ctx.addAction ("palette.open", U ("Rechercher une commande…"), "Aide", KP ('k', ctrl, 0), [this] { openPalette(); });
     ctx.addAction ("help.shortcuts", "Raccourcis clavier", "Aide", KP (KP::F1Key), [this] { showShortcuts(); });
+    ctx.addAction ("midi.libraries", U ("Bibliothèques d'instruments enregistrés (piano, orchestre, batterie…)…"), "MIDI", {}, [this]
+    {
+        if (librariesWindow != nullptr) { librariesWindow->toFront (true); return; }
+        librariesWindow = LibrariesPanel::show (ctx);
+    });
     ctx.addAction ("help.updates", U ("Rechercher des mises à jour…"), "Aide", {}, [this] { checkForUpdates (true); });
     ctx.addAction ("help.demo", U ("Projet de démonstration"), "Aide", {}, [this] { if (onOpenDemo) onOpenDemo(); });
     ctx.addAction ("help.about", U ("À propos d'Onde"), "Aide", {}, [] { AboutPanel::show(); })->separatorBefore = true;
@@ -1316,6 +1341,7 @@ void MainComponent::saveProject (std::function<void (bool)> done)
     const bool ok = te::EditFileOperations (*edit).writeToFile (projectFile, false);
     if (ok) { edit->resetChangedStatus(); savedGeneration = editGeneration; }
     setStatus (ok ? U ("Projet enregistré : ") + projectFile.getFileName() : U ("Échec de l'enregistrement"));
+    toast.show (ok ? U ("Enregistré") : U ("Échec de l'enregistrement"), ok ? theme::ok : theme::rec);
     recoveryFile().deleteFile();
     if (done) done (ok);
 }
@@ -1348,6 +1374,7 @@ bool MainComponent::saveProjectTo (const juce::File& target)
     const int copied = consolidateMedia (f);
     const bool ok = te::EditFileOperations (*edit).writeToFile (f, false);
     if (ok) { projectFile = f; untitled = false; { edit->resetChangedStatus(); savedGeneration = editGeneration; } rememberProject (f); if (onTitleChanged) onTitleChanged (projectName()); }
+    if (ok) toast.show (U ("Enregistré : ") + f.getFileNameWithoutExtension());
     else { const auto old = projectFile; edit->editFileRetriever = [old] { return old; }; }
     setStatus (! ok ? U ("Échec de l'enregistrement")
                     : copied > 0 ? U ("Projet enregistré, ") + juce::String (copied) + U (" fichier(s) audio copié(s) dans « ") + f.getFileNameWithoutExtension() + U (" - Audio »")

@@ -2,6 +2,7 @@
 #include "OndeEffects.h"
 #include "OndeSynth.h"
 #include "OndeFx2.h"
+#include "OndeSampler.h"
 #include "SandboxPlugin.h"
 
 PluginCatalog::PluginCatalog() : juce::Thread ("Analyse des plugins")
@@ -26,6 +27,7 @@ juce::Array<PluginEntry> PluginCatalog::getBuiltIns (bool instruments) const
     if (instruments)
     {
         add ("Onde Synth (pianos, basses, nappes, cordes, batteries…)", ondefx::SynthPlugin::xmlTypeName, true); r.getReference (r.size() - 1).manufacturer = "Onde";
+        add ("Onde Échantillonneur (bibliothèques d'instruments enregistrés, SFZ)", ondefx::SamplerPlugin::xmlTypeName, true); r.getReference (r.size() - 1).manufacturer = "Onde";
         add ("4OSC (synthé intégré)", te::FourOscPlugin::xmlTypeName, true);
     }
     else

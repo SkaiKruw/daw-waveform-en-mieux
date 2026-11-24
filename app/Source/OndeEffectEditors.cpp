@@ -3,6 +3,7 @@
 #include "OndeEffects.h"
 #include "OndeSynth.h"
 #include "OndeFx2.h"
+#include "OndeSampler.h"
 #include "Theme.h"
 #include "ParamControls.h"
 
@@ -468,6 +469,7 @@ namespace ondefx
         if (auto* c = dynamic_cast<CompPlugin*> (&p))         return std::make_unique<CompEditor> (*c);
         if (auto* l = dynamic_cast<LimiterPlugin*> (&p))      return std::make_unique<LimiterEditor> (*l);
         if (auto* s = dynamic_cast<SynthPlugin*> (&p))        return createSynthEditor (*s);
+        if (auto* sp = dynamic_cast<SamplerPlugin*> (&p))     return createSamplerEditor (*sp);
         if (auto e = createFx2Editor (p))                      return e;
         return {};
     }

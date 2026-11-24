@@ -1,6 +1,7 @@
 #include "OndeEffects.h"
 #include "OndeSynth.h"
 #include "OndeFx2.h"
+#include "OndeSampler.h"
 
 namespace ondefx
 {
@@ -724,5 +725,6 @@ namespace ondefx
         pm.createBuiltInType<MasterMeterPlugin>();
         pm.createBuiltInType<ModulationPlugin>();
         pm.createBuiltInType<AmpPlugin>();
+        pm.createBuiltInType<SamplerPlugin>();
     }
 }

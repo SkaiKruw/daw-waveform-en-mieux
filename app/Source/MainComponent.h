@@ -2,6 +2,7 @@
 // (MixConsole / éditeur de notes), zone droite (médias), barre de transport.
 #pragma once
 #include "EditContext.h"
+#include "Toast.h"
 #include "ArrangementView.h"
 #include "MixerView.h"
 #include "PianoRollView.h"
@@ -55,6 +56,7 @@ public:
     // Paramètres de l'application (onglet : 0 général, 1 audio, 2 interface, 3 plugins, 4 modèles).
     void showPreferences (int tab = 0);
     void checkForUpdates (bool userAsked);
+    Toast& getToast() { return toast; }
     PluginCatalog& getCatalog() { return catalog; }
     // Modèles personnels : le projet ouvert sans ses événements (pistes, sons, effets, routage, tempo, repères).
     static juce::File templatesFolder();
@@ -156,7 +158,7 @@ private:
     CommandPalette palette { ctx };
     RemoteControl remote { ctx };                       // télécommande depuis un téléphone
     juce::Component::SafePointer<juce::DialogWindow> remoteWindow;
-    juce::Component::SafePointer<juce::DialogWindow> hubWindow, preferencesWindow, historyWindow, modulatorWindow, keyboardWindow, libraryWindow, drummerWindow, lyricsWindow;
+    juce::Component::SafePointer<juce::DialogWindow> hubWindow, preferencesWindow, librariesWindow, historyWindow, modulatorWindow, keyboardWindow, libraryWindow, drummerWindow, lyricsWindow;
     std::map<juce::String, juce::Component::SafePointer<juce::DialogWindow>> effectWindows;   // fenêtres des effets Onde
     juce::String status;
     juce::String paintedStatus;
@@ -165,6 +167,7 @@ private:
     int editGeneration = 0, savedGeneration = 0;     // modifications (historique) depuis la dernière sauvegarde
     bool autosaved = false, applyingInputs = false;
     juce::String updateNotice;
+    Toast toast;
     std::unique_ptr<juce::FileChooser> chooser;
 
     static constexpr int menuH = 24, toolbarH = 40, infoH = 26, transportH = 54, statusH = 22, lowerTabsH = 26,
