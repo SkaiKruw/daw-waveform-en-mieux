@@ -1,5 +1,6 @@
 # Onde — fabrique l'installateur Windows à partir de la dernière compilation (build-windows).
-#   build-windows\installateur\Onde-Setup-<version>.exe      installateur (IExpress, intégré à Windows)
+#   build-windows\installateur\Onde-Setup-<version>.exe      installateur d'Onde (étapes, désinstalleur, fichiers .onde ;
+#                                                             --silencieux [--dossier D] pour une installation sans fenêtre)
 #   build-windows\installateur\Onde-<version>-portable.zip   même contenu, à décompresser n'importe où
 # Options : -SansModeles (sans les modèles du séparateur, ≈ 320 Mo de moins), -Version x.y
 param([switch] $SansModeles, [string] $Version = '')
@@ -8,6 +9,8 @@ $projet = Split-Path -Parent $PSScriptRoot
 $rel = Join-Path $projet 'build-windows\app\Onde_artefacts\Release'
 $sortie = Join-Path $projet 'build-windows\installateur'
 if (-not (Test-Path (Join-Path $rel 'Onde.exe'))) { throw "Onde.exe introuvable : compilez d'abord (windows\Installer-et-lancer-Onde.bat)." }
+# Programme d'installation (petit, compilé à part).
+cmake --build (Join-Path $projet 'build-windows') --config Release --target onde-setup | Out-Null
 if (-not $Version) {
     $m = Select-String -Path (Join-Path $projet 'app\Source\AboutPanel.h') -Pattern 'version = "([^"]+)"' | Select-Object -First 1
     $Version = if ($m) { $m.Matches[0].Groups[1].Value } else { '0.0' }
@@ -36,77 +39,31 @@ Copy-Item (Join-Path $crt.FullName '*.dll') $app
 Write-Host "Runtime : $($crt.FullName)"
 
 # 2. Archive et installateur.
+# L'installateur est un programme d'Onde (onde-setup.exe : étapes, désinstalleur, fichiers .onde) ; l'archive de
+# l'application est ajoutée à sa fin, suivie de sa position (8 octets) et de la signature « ONDEPAK1 ».
+Set-Content (Join-Path $app 'version.txt') $Version
 $zip = Join-Path $paquet 'onde.zip'
 Write-Host 'Compression…'
 Compress-Archive -Path (Join-Path $app '*') -DestinationPath $zip -CompressionLevel Optimal
-# Scripts en UTF-8 avec BOM : sinon Windows PowerShell 5.1 les lit en ANSI et les accents sont abîmés.
-foreach ($script in 'installer.ps1', 'desinstaller.ps1') {
-    $texte = [IO.File]::ReadAllText((Join-Path $PSScriptRoot "installateur\$script"), [Text.Encoding]::UTF8)
-    [IO.File]::WriteAllText((Join-Path $paquet $script), $texte, (New-Object Text.UTF8Encoding $true))
-}
-Copy-Item (Join-Path $projet 'app\Resources\logo-192.png') (Join-Path $paquet 'logo.png')
-Set-Content (Join-Path $paquet 'version.txt') $Version
 
+$stub = Join-Path $projet 'build-windows\app\onde-setup_artefacts\Release\onde-setup.exe'
+if (-not (Test-Path $stub)) { throw "onde-setup.exe introuvable : cmake --build build-windows --config Release --target onde-setup" }
 $setup = Join-Path $sortie "Onde-Setup-$Version.exe"
 $portable = Join-Path $sortie "Onde-$Version-portable.zip"
 Remove-Item $setup, $portable -ErrorAction SilentlyContinue
 Copy-Item $zip $portable
-$fichiers = 'installer.ps1', 'desinstaller.ps1', 'onde.zip', 'logo.png', 'version.txt'
-$sed = @"
-[Version]
-Class=IEXPRESS
-SEDVersion=3
-[Options]
-PackagePurpose=InstallApp
-ShowInstallProgramWindow=1
-HideExtractAnimation=1
-UseLongFileName=1
-InsideCompressed=0
-CAB_FixedSize=0
-CAB_ResvCodeSigning=0
-RebootMode=N
-InstallPrompt=%InstallPrompt%
-DisplayLicense=%DisplayLicense%
-FinishMessage=%FinishMessage%
-TargetName=%TargetName%
-FriendlyName=%FriendlyName%
-AppLaunched=%AppLaunched%
-PostInstallCmd=%PostInstallCmd%
-AdminQuietInstCmd=%AdminQuietInstCmd%
-UserQuietInstCmd=%UserQuietInstCmd%
-SourceFiles=SourceFiles
-[Strings]
-InstallPrompt=
-DisplayLicense=
-FinishMessage=
-TargetName=$setup
-FriendlyName=Onde $Version
-AppLaunched=cmd /c powershell.exe -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File installer.ps1
-PostInstallCmd=<None>
-AdminQuietInstCmd=
-UserQuietInstCmd=
-$(($fichiers | ForEach-Object -Begin { $i = 0 } -Process { "FILE$i=`"$_`""; $i++ }) -join "`r`n")
-[SourceFiles]
-SourceFiles0=$paquet\
-[SourceFiles0]
-$(($fichiers | ForEach-Object -Begin { $i = 0 } -Process { "%FILE$i%="; $i++ }) -join "`r`n")
-"@
-$sedFile = Join-Path $sortie 'onde.sed'
-Set-Content $sedFile $sed -Encoding Ascii
-Write-Host 'Fabrication de l''installateur (IExpress)…'
-# IExpress refuse un chemin entre guillemets : le fichier SED est placé dans un dossier sans espace.
-if ($sedFile.Contains(' ')) {
-    $court = Join-Path $env:TEMP 'onde-installateur.sed'
-    Copy-Item $sedFile $court -Force
-    $sedFile = $court
-}
-$p = Start-Process (Join-Path $env:SystemRoot 'System32\iexpress.exe') -ArgumentList "/N /Q $sedFile" -Wait -PassThru
-# IExpress peut rendre la main avant la fin de la compression (makecab) : on attend le fichier final.
-$limite = (Get-Date).AddMinutes(15)
-while ((Get-Date) -lt $limite -and ((Get-Process makecab, iexpress -ErrorAction SilentlyContinue) -or -not (Test-Path $setup))) {
-    if (-not (Get-Process makecab, iexpress -ErrorAction SilentlyContinue) -and -not (Test-Path $setup)) { break }
-    Start-Sleep 1
-}
-if (-not (Test-Path $setup)) { throw "IExpress n'a pas produit l'installateur (code $($p.ExitCode))." }
+Write-Host 'Fabrication de l''installateur…'
+$out = [IO.File]::Open($setup, [IO.FileMode]::Create)
+try {
+    $bytes = [IO.File]::ReadAllBytes($stub)
+    $out.Write($bytes, 0, $bytes.Length)
+    $offset = [long] $out.Position
+    $in = [IO.File]::OpenRead($zip)
+    try { $in.CopyTo($out) } finally { $in.Dispose() }
+    $off = [BitConverter]::GetBytes($offset)          # petit-boutiste, comme InputStream::readInt64 de JUCE
+    $out.Write($off, 0, 8)
+    $magic = [Text.Encoding]::ASCII.GetBytes('ONDEPAK1')
+    $out.Write($magic, 0, 8)
+} finally { $out.Dispose() }
 "{0}  {1:N0} Mo" -f $setup, ((Get-Item $setup).Length / 1MB)
 "{0}  {1:N0} Mo" -f $portable, ((Get-Item $portable).Length / 1MB)

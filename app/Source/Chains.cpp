@@ -16,6 +16,7 @@ namespace chains
         constexpr const char* ECHO = "ondeEcho";
         constexpr const char* SPACE = "ondeSpace";
         constexpr const char* SYNTH = "ondeSynth";
+        constexpr const char* AMP = "ondeAmp";
 
         te::Plugin* findPlugin (te::AudioTrack& t, const char* type)
         {
@@ -72,19 +73,26 @@ namespace chains
                 { COMP, { { "threshold", -24 }, { "ratio", 3 }, { "autorel", 1 }, { "makeup", 5 } } },
                 { LIM, { { "input", 4 }, { "ceiling", -1 }, { "target", 1 } } } },
               { { "Présence", { { EQ, "b4gain", 0.25f } } }, { "Compression", { { COMP, "threshold", -0.3f } } }, { "Volume", { { LIM, "input", 0.5f } } } } },
-            { "Guitares", "Guitare claire", "Nette et brillante, écho pointé et espace",
-              { { EQ, { { "b0on", 1 }, { "b0freq", 80 }, { "b4freq", 3000 }, { "b4gain", 2 } } },
+            { "Guitares", "Guitare claire", "Ampli clair, nette et brillante, écho pointé et espace",
+              { { AMP, { { "model", 0 }, { "gain", 4 }, { "treble", 6.5f }, { "presence", 6 }, { "cab", 2 } } },
+                { EQ, { { "b0on", 1 }, { "b0freq", 80 }, { "b4freq", 3000 }, { "b4gain", 2 } } },
                 { COMP, { { "threshold", -18 }, { "ratio", 2.5f }, { "style", 1 } } },
                 { ECHO, { { "division", 5 }, { "feedback", 25 }, { "mix", 15 } } },
                 { SPACE, { { "size", 0.6f }, { "decay", 2 }, { "mix", 18 } } } },
               { { "Brillance", { { EQ, "b5gain", 0.25f } } }, { "Écho", { { ECHO, "mix", 0.4f } } }, { "Espace", { { SPACE, "mix", 0.5f } } },
                 { "Compression", { { COMP, "threshold", -0.3f } } } } },
-            { "Guitares", "Guitare saturée", "Saturation à lampe, médiums creusés, aigus adoucis",
-              { { SAT, { { "character", 1 }, { "drive", 24 }, { "tone", 0.1f }, { "mix", 100 } } },
+            { "Guitares", "Guitare saturée", "Ampli à lampes poussé, médiums creusés, aigus adoucis",
+              { { AMP, { { "model", 2 }, { "gate", -70 }, { "boost", 2 }, { "gain", 6.5f }, { "mid", 5.5f }, { "cab", 3 }, { "mic", 0.35f } } },
                 { EQ, { { "b0on", 1 }, { "b0freq", 90 }, { "b2freq", 400 }, { "b2gain", -3 }, { "b4freq", 2500 }, { "b4gain", 2 }, { "b6on", 1 }, { "b6freq", 9000 } } },
                 { SPACE, { { "size", 0.4f }, { "decay", 1.2f }, { "mix", 10 } } } },
-              { { "Saturation", { { SAT, "drive", 0.4f } } }, { "Tonalité", { { SAT, "tone", 0.6f } } }, { "Brillance", { { EQ, "b4gain", 0.25f } } },
+              { { "Gain", { { AMP, "gain", 0.4f } } }, { "Médiums", { { AMP, "mid", 0.4f } } }, { "Brillance", { { EQ, "b4gain", 0.25f } } },
                 { "Espace", { { SPACE, "mix", 0.4f } } } } },
+            { "Guitares", "Guitare métal", "Ampli moderne très saturé, boost qui resserre le grave, porte de bruit",
+              { { AMP, { { "model", 3 }, { "gate", -58 }, { "boost", 7 }, { "gain", 6 }, { "bass", 5.5f }, { "mid", 4.5f }, { "treble", 6 }, { "presence", 6.5f }, { "cab", 3 }, { "mic", 0.25f } } },
+                { EQ, { { "b0on", 1 }, { "b0freq", 90 }, { "b6on", 1 }, { "b6freq", 9000 } } },
+                { SPACE, { { "size", 0.35f }, { "decay", 0.9f }, { "mix", 8 } } } },
+              { { "Gain", { { AMP, "gain", 0.4f } } }, { "Serrage", { { AMP, "boost", 0.4f } } }, { "Présence", { { AMP, "presence", 0.4f } } },
+                { "Porte", { { AMP, "gate", 0.3f } } } } },
             { "Guitares", "Guitare acoustique", "Naturelle, moins de boue, plus d'air",
               { { EQ, { { "b0on", 1 }, { "b0freq", 70 }, { "b2freq", 250 }, { "b2gain", -2 }, { "b5gain", 2.5f } } },
                 { COMP, { { "threshold", -20 }, { "ratio", 2 }, { "style", 1 } } },
@@ -95,6 +103,10 @@ namespace chains
                 { COMP, { { "threshold", -22 }, { "ratio", 4 }, { "attack", 10 }, { "release", 120 }, { "style", 1 }, { "makeup", 4 } } },
                 { SAT, { { "character", 2 }, { "drive", 6 }, { "mix", 40 } } } },
               { { "Rondeur", { { EQ, "b1gain", 0.25f } } }, { "Grain", { { SAT, "drive", 0.5f } } }, { "Compression", { { COMP, "threshold", -0.3f } } } } },
+            { "Basses", "Basse à l'ampli", "Ampli basse et baffle 8x10 : grave plein, grain dans les médiums",
+              { { AMP, { { "model", 4 }, { "gain", 5 }, { "bass", 6 }, { "mid", 5.5f }, { "treble", 4.5f }, { "cab", 4 } } },
+                { COMP, { { "threshold", -22 }, { "ratio", 4 }, { "attack", 8 }, { "release", 120 }, { "makeup", 4 } } } },
+              { { "Grain", { { AMP, "gain", 0.4f } } }, { "Graves", { { AMP, "bass", 0.4f } } }, { "Compression", { { COMP, "threshold", -0.3f } } } } },
             { "Basses", "Basse punchy", "Attaque nette, présente dans le mix",
               { { EQ, { { "b0on", 1 }, { "b0freq", 40 }, { "b2freq", 120 }, { "b2gain", 2 }, { "b4freq", 2000 }, { "b4gain", 2 } } },
                 { COMP, { { "threshold", -24 }, { "ratio", 5 }, { "attack", 2 }, { "makeup", 5 } } },

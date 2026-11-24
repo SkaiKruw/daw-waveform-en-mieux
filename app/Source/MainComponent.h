@@ -54,6 +54,7 @@ public:
     void showHub();
     // Paramètres de l'application (onglet : 0 général, 1 audio, 2 interface, 3 plugins, 4 modèles).
     void showPreferences (int tab = 0);
+    void checkForUpdates (bool userAsked);
     PluginCatalog& getCatalog() { return catalog; }
     // Modèles personnels : le projet ouvert sans ses événements (pistes, sons, effets, routage, tempo, repères).
     static juce::File templatesFolder();
@@ -161,6 +162,9 @@ private:
     juce::String paintedStatus;
     int statusTick = 0;
     juce::Time statusTime, lastAutosave;
+    int editGeneration = 0, savedGeneration = 0;     // modifications (historique) depuis la dernière sauvegarde
+    bool autosaved = false, applyingInputs = false;
+    juce::String updateNotice;
     std::unique_ptr<juce::FileChooser> chooser;
 
     static constexpr int menuH = 24, toolbarH = 40, infoH = 26, transportH = 54, statusH = 22, lowerTabsH = 26,

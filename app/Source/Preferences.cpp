@@ -3,6 +3,9 @@
 #include "HubPanel.h"
 #include "PluginCatalog.h"
 
+// Sons du métronome : fonction du moteur (déclarée dans un en-tête interne de Tracktion).
+namespace tracktion::inline engine { namespace Click { void setClickWaveFile (Engine&, bool big, const juce::String& filename); } }
+
 namespace prefs
 {
     juce::PropertiesFile& file()
@@ -19,6 +22,7 @@ namespace prefs
     }
     double newProjectBpm()       { return juce::jlimit (30.0, 300.0, file().getDoubleValue ("bpm", 120.0)); }
     int autosaveSeconds()        { return juce::jlimit (0, 3600, file().getIntValue ("autosave", 15)); }
+    bool monoInputs()            { return file().getBoolValue ("monoInputs", true); }
     float uiScale()              { return (float) juce::jlimit (0.75, 2.0, file().getDoubleValue ("uiScale", 1.0)); }
     void applyUiScale()          { juce::Desktop::getInstance().setGlobalScaleFactor (uiScale()); }
     juce::File projectsFolder()
@@ -150,9 +154,13 @@ namespace
         explicit AudioPage (MainComponent& m) : Page (U ("Audio et MIDI"), U ("Carte son, entrées et sorties, claviers MIDI branchés")),
             selector (m.getContext().engine.getDeviceManager().deviceManager, 0, 256, 0, 256, true, false, true, false)
         {
+            mono.setToggleState (prefs::monoInputs(), juce::dontSendNotification);
+            mono.onClick = [this, &m] { prefs::file().setValue ("monoInputs", mono.getToggleState()); m.getContext().useMonoInputs (mono.getToggleState()); };
+            addRow (U ("Une entrée par prise"), U ("Micro sur l'entrée 1, guitare sur la 2 : chaque prise est une entrée mono, enregistrée au centre (sinon paires stéréo)."), mono, 40);
             setBody (&selector);
         }
         juce::AudioDeviceSelectorComponent selector;
+        juce::ToggleButton mono;
     };
 
     class InterfacePage  : public SettingsPanel::Page
@@ -298,8 +306,148 @@ namespace
     };
 }
 
+
+namespace prefs
+{
+    juce::StringArray clickSoundNames() { return { U ("Bois"), U ("Classique"), U ("Électronique"), U ("Doux"), U ("Cloche") }; }
+
+    void applyClickSound (te::Engine& engine)
+    {
+        // Sons de métronome fabriqués par Onde (fichiers WAV écrits une fois dans %APPDATA%\Onde\clics).
+        const int kind = juce::jlimit (0, 4, file().getIntValue ("clickSound", 0));
+        const auto dir = juce::File::getSpecialLocation (juce::File::userApplicationDataDirectory).getChildFile ("Onde").getChildFile ("clics");
+        dir.createDirectory();
+        for (bool big : { true, false })
+        {
+            const auto f = dir.getChildFile (juce::String (kind) + (big ? "-fort.wav" : "-faible.wav"));
+            if (! f.existsAsFile())
+            {
+                const double sr = 48000.0;
+                juce::AudioBuffer<float> b (1, (int) (sr * (kind == 4 ? 0.25 : 0.08)));
+                juce::Random rnd (kind * 2 + (big ? 1 : 0));
+                const double pi2 = juce::MathConstants<double>::twoPi;
+                float nlp = 0;
+                for (int i = 0; i < b.getNumSamples(); ++i)
+                {
+                    const double t = i / sr;
+                    float s = 0;
+                    switch (kind)
+                    {
+                        case 0:  // bois : deux modes amortis, plus aigu sur le premier temps
+                        {
+                            const double f = big ? 1950.0 : 1450.0;
+                            s = (float) (std::sin (pi2 * f * t) * std::exp (-t / 0.012) + 0.5 * std::sin (pi2 * f * 2.03 * t) * std::exp (-t / 0.006));
+                            nlp += 0.4f * ((rnd.nextFloat() * 2.0f - 1.0f) - nlp);
+                            s += nlp * (float) std::exp (-t / 0.002) * 0.6f;
+                            break;
+                        }
+                        case 1:  // classique : impulsion claire
+                            s = (float) (std::sin (pi2 * (big ? 2500.0 : 1800.0) * t) * std::exp (-t / 0.008));
+                            break;
+                        case 2:  // électronique : bip carré adouci
+                        {
+                            const double f = big ? 1000.0 : 750.0, ph = std::fmod (f * t, 1.0);
+                            s = (float) ((ph < 0.5 ? 0.6 : -0.6) * std::exp (-t / 0.025) * juce::jmin (1.0, t * 2000.0));
+                            break;
+                        }
+                        case 3:  // doux : sinus feutré
+                            s = (float) (std::sin (pi2 * (big ? 1200.0 : 900.0) * t) * std::exp (-t / 0.02) * juce::jmin (1.0, t * 800.0));
+                            break;
+                        default: // cloche : deux partiels métalliques
+                        {
+                            const double f = big ? 800.0 : 560.0;
+                            s = (float) ((std::sin (pi2 * f * t) + 0.7 * std::sin (pi2 * f * 1.48 * t)) * 0.5 * std::exp (-t / 0.07));
+                            break;
+                        }
+                    }
+                    b.setSample (0, i, s * (big ? 0.9f : 0.65f));
+                }
+                f.deleteFile();
+                juce::WavAudioFormat wav;
+                if (auto out = std::unique_ptr<juce::OutputStream> (f.createOutputStream()))
+                    if (auto writer = std::unique_ptr<juce::AudioFormatWriter> (wav.createWriterFor (out.get(), sr, 1, 16, {}, 0)))
+                    {
+                        out.release();
+                        writer->writeFromAudioSampleBuffer (b, 0, b.getNumSamples());
+                    }
+            }
+            te::Click::setClickWaveFile (engine, big, f.getFullPathName());
+        }
+    }
+
+    void applyMetronomeDefaults (te::Edit& e)
+    {
+        e.setClickTrackVolume ((float) juce::jlimit (0.2, 1.0, file().getDoubleValue ("clickVolume", 0.6)));
+        e.clickTrackEmphasiseBars = file().getBoolValue ("clickAccent", true);
+        e.clickTrackRecordingOnly = file().getBoolValue ("clickRecordOnly", false);
+        e.setCountInMode ((te::Edit::CountIn) juce::jlimit (0, 4, file().getIntValue ("countIn", 0)));
+    }
+}
+
+namespace
+{
+    class MetronomePage  : public SettingsPanel::Page
+    {
+    public:
+        explicit MetronomePage (MainComponent& m) : Page (U ("Métronome"), U ("Son, volume, accent, décompte avant l'enregistrement")), main (m)
+        {
+            sound.addItemList (prefs::clickSoundNames(), 1);
+            sound.setSelectedId (juce::jlimit (0, 4, prefs::file().getIntValue ("clickSound", 0)) + 1, juce::dontSendNotification);
+            sound.onChange = [this]
+            {
+                prefs::file().setValue ("clickSound", sound.getSelectedId() - 1);
+                prefs::applyClickSound (main.getContext().engine);
+                if (auto* e = main.getEdit()) e->restartPlayback();
+            };
+            styleBox (sound);
+            addRow (U ("Son"), U ("Sons créés par Onde ; le premier temps de chaque mesure est plus aigu."), sound, 200);
+
+            volume.setRange (20.0, 100.0, 1.0);
+            volume.setTextValueSuffix (" %");
+            volume.setTextBoxStyle (juce::Slider::TextBoxRight, false, 64, 24);
+            volume.onValueChange = [this]
+            {
+                prefs::file().setValue ("clickVolume", volume.getValue() / 100.0);
+                if (auto* e = main.getEdit()) e->setClickTrackVolume ((float) volume.getValue() / 100.0f);
+            };
+            addRow (U ("Volume"), U ("Niveau du métronome dans le casque ou les enceintes."), volume, 260);
+
+            accent.onClick = [this] { prefs::file().setValue ("clickAccent", accent.getToggleState()); if (auto* e = main.getEdit()) e->clickTrackEmphasiseBars = accent.getToggleState(); };
+            addRow (U ("Accentuer le premier temps"), U ("Un son différent au début de chaque mesure."), accent, 40);
+
+            recordOnly.onClick = [this] { prefs::file().setValue ("clickRecordOnly", recordOnly.getToggleState()); if (auto* e = main.getEdit()) e->clickTrackRecordingOnly = recordOnly.getToggleState(); };
+            addRow (U ("Seulement pendant l'enregistrement"), U ("Le métronome se tait pendant la simple lecture."), recordOnly, 40);
+
+            countIn.addItemList ({ U ("Aucun"), U ("1 mesure"), U ("2 mesures"), U ("2 temps"), U ("1 temps") }, 1);
+            countIn.onChange = [this]
+            {
+                prefs::file().setValue ("countIn", countIn.getSelectedId() - 1);
+                if (auto* e = main.getEdit()) e->setCountInMode ((te::Edit::CountIn) (countIn.getSelectedId() - 1));
+            };
+            styleBox (countIn);
+            addRow (U ("Décompte avant l'enregistrement"), U ("Le métronome compte avant que l'enregistrement commence."), countIn, 200);
+            sync();
+        }
+        void sync()
+        {
+            if (auto* e = main.getEdit())
+            {
+                volume.setValue (juce::roundToInt (e->getClickTrackVolume() * 100.0f), juce::dontSendNotification);
+                accent.setToggleState (e->clickTrackEmphasiseBars.get(), juce::dontSendNotification);
+                recordOnly.setToggleState (e->clickTrackRecordingOnly.get(), juce::dontSendNotification);
+                countIn.setSelectedId ((int) e->getCountInMode() + 1, juce::dontSendNotification);
+            }
+        }
+    private:
+        MainComponent& main;
+        juce::ComboBox sound, countIn;
+        juce::Slider volume;
+        juce::ToggleButton accent, recordOnly;
+    };
+}
+
 //==============================================================================
-juce::StringArray SettingsPanel::tabNames() { return { U ("Général"), U ("Audio et MIDI"), U ("Interface"), U ("Plugins"), U ("Modèles") }; }
+juce::StringArray SettingsPanel::tabNames() { return { U ("Général"), U ("Audio et MIDI"), U ("Interface"), U ("Plugins"), U ("Modèles"), U ("Métronome") }; }
 
 SettingsPanel::SettingsPanel (MainComponent& m) : main (m)
 {
@@ -308,6 +456,7 @@ SettingsPanel::SettingsPanel (MainComponent& m) : main (m)
     pages.add (new InterfacePage (m));
     pages.add (new PluginsPage (m));
     pages.add (new TemplatesPage (m));
+    pages.add (new MetronomePage (m));
     for (auto* p : pages) addChildComponent (p);
     showTab (0);
     setSize (900, 600);

@@ -1,4 +1,5 @@
 #include "RemoteControl.h"
+#include "Preferences.h"
 #include "BinaryData.h"
 
 namespace
@@ -44,7 +45,9 @@ bool RemoteControl::start (int p, bool localOnly)
         listener.reset();
         return false;
     }
-    code = juce::String (juce::Random::getSystemRandom().nextInt ({ 100000, 1000000 }));
+    // Code gardé d'une activation à l'autre : l'application installée sur le téléphone reste appairée.
+    code = prefs::file().getValue ("remoteCode");
+    if (code.length() != 6 || ! code.containsOnly ("0123456789")) renewCode();
     badAttempts = 0;
     lockedUntil = 0;
     timerCallback();
@@ -235,6 +238,8 @@ bool RemoteControl::checkCode (const juce::StringPairArray& query, int& status)
     const auto now = juce::Time::getMillisecondCounter();
     if (now < lockedUntil) { status = 429; return false; }
     if (query["k"] == code && code.isNotEmpty()) { badAttempts = 0; lastClientMs = now; return true; }
+    // Sans code (téléphone qui attend qu'on le saisisse) : refusé, mais ne compte pas comme un essai.
+    if (query["k"].isEmpty()) { status = 403; return false; }
     if (++badAttempts >= 10) { lockedUntil = now + 30000; badAttempts = 0; }
     status = 403;
     return false;
@@ -299,4 +304,14 @@ juce::String RemoteControl::handle (const juce::String& method, const juce::Stri
     }
     status = 404;
     return R"({"error":"introuvable"})";
+}
+
+void RemoteControl::renewCode()
+{
+    // Nouveau code : les téléphones déjà appairés devront le saisir (à faire si le code a pu être vu par d'autres).
+    code = juce::String (juce::Random::getSystemRandom().nextInt ({ 100000, 1000000 }));
+    prefs::file().setValue ("remoteCode", code);
+    prefs::file().saveIfNeeded();
+    badAttempts = 0;
+    lockedUntil = 0;
 }

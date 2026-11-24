@@ -35,9 +35,9 @@ que les utilisateurs mettent en avant dans les tests de logiciels et de plugins.
 | Couloirs de contrôleurs (CC, pitch bend) | ✅ | vélocité, CC 0-127, pitch bend, aftertouch ; dessin libre et lignes |
 | Éditeur de batterie, piste de batterie, boîte à rythmes | 🟡 | Batteur automatique (6 styles), modifiable note à note |
 | Séquenceur de motifs | ❌ | |
-| Éditeur de partition | 🟡 | tablature (guitare, basse, ukulélé) ; pas de portée classique |
+| Éditeur de partition | 🟡 | tablature avec portée dans la clé de l'instrument (sol, sol octaviée, fa, ut), accordage libre ; pas encore d'éditeur de partition complet (rythmes, impression) |
 | Échantillonneur (piste sampler) | ❌ | |
-| Instruments intégrés | ✅ | Onde Synth (5 moteurs dont cordes pincées en modèle physique, 44 sons), 4OSC ; VST3 isolés |
+| Instruments intégrés | ✅ | Onde Synth (5 moteurs dont cordes pincées en modèle physique, 46 sons), 4OSC ; VST3 isolés |
 
 ## Mixage et effets
 
@@ -69,7 +69,9 @@ que les utilisateurs mettent en avant dans les tests de logiciels et de plugins.
 | Télécommande sur téléphone | ✅ | **avantage d'Onde** : Cubase passe par une application payante |
 | Format DAWproject (échange avec d'autres logiciels) | ❌ | |
 | Moteur 64 bits, 192 kHz | 🟡 | 32 bits flottant |
-| macOS | ❌ | Windows seulement |
+| macOS | 🟡 | compilation préparée sur GitHub (Actions), pas encore essayée sur un Mac |
+| Simulation d'ampli guitare et basse | ✅ | Onde Ampli (5 modèles, boost, porte, baffles, micro) |
+| Installateur, mises à jour | ✅ | installateur Onde (mise à jour, désinstalleur, fichiers .onde), vérification des mises à jour |
 
 ## Ordre de travail proposé
 
@@ -82,6 +84,8 @@ que les utilisateurs mettent en avant dans les tests de logiciels et de plugins.
 7. ~~Effets Onde : réverbération, delay, saturation, modulation~~ : fait. Reste : de-esser, gate.
 8. ~~Paramètres, modèles personnels, fenêtre d'instrument redessinée~~ : fait.
 9. Instruments échantillonnés (piano, batterie, cordes enregistrés) en packs téléchargeables à la demande, hors installateur.
+10. Batteur qui suit la piste d'arrangement ; ampli : réponses de baffles enregistrées (impulsions) en option.
+11. Version macOS : première compilation sur GitHub, puis essais sur un Mac.
 
 ## « Tout est déjà là » : l'accueil d'un logiciel grand public, la puissance de Cubase
 

@@ -159,3 +159,50 @@ namespace ondefx
         void clear();
     };
 }
+
+namespace ondefx
+{
+    //==============================================================================
+    // Ampli : simulation d'ampli guitare / basse (code original). Porte de bruit, pédale de boost (bosse dans les
+    // médiums, grave resserré), préampli à 1 à 4 étages à lampe suréchantillonné x4, égaliseur (graves, médiums,
+    // aigus, présence), étage de puissance, baffle simulé (résonance du haut-parleur, coupure des aigus selon la
+    // position du micro). Cinq modèles : clair, crunch, lead, moderne (très saturé, serré), basse.
+    class AmpPlugin  : public OndeEffect
+    {
+    public:
+        explicit AmpPlugin (te::PluginCreationInfo);
+        static const char* xmlTypeName;
+        static const char* getPluginName()           { return "Onde Ampli"; }
+        juce::String getName() const override        { return "Onde Ampli"; }
+        juce::String getPluginType() override        { return xmlTypeName; }
+        juce::String getShortName (int) override     { return "Ampli"; }
+        void initialise (const te::PluginInitialisationInfo&) override;
+        void deinitialise() override {}
+        void reset() override;
+        double getLatencySeconds() override;
+        void applyToBuffer (const te::PluginRenderContext&) override;
+        static constexpr const char* modelNames[5] = { "Clair", "Crunch", "Lead", "Moderne", "Basse" };
+        static constexpr const char* cabNames[5] = { "Sans baffle", "1x12 ouvert", "2x12", "4x12 fermé", "Basse 8x10" };
+        float responseDb (float hz) const;           // égaliseur + baffle (affichage)
+        std::atomic<float> gateOpen { 1.0f }, inputDb { -100.0f };
+
+        struct Biquad
+        {
+            float b0 = 1, b1 = 0, b2 = 0, a1 = 0, a2 = 0, z1[2] {}, z2[2] {};
+            inline float process (float x, int c) noexcept { const float y = b0 * x + z1[c]; z1[c] = b1 * x - a1 * y + z2[c]; z2[c] = b2 * x - a2 * y; return y; }
+            void reset() noexcept { z1[0] = z1[1] = z2[0] = z2[1] = 0; }
+            float magnitudeDb (double hz, double fs) const;
+            void set (int type, double f, double q, double gainDb, double fs);   // 0 passe-bas 1 passe-haut 2 cloche 3 plateau grave 4 plateau aigu
+        };
+    private:
+        void updateFilters();
+        double rate = 48000.0;
+        std::unique_ptr<juce::dsp::Oversampling<float>> oversampling;
+        int preparedBlock = 0;
+        Biquad tone[4], cab[5], boostMid, inputHP, tight;
+        float stageHP[4][2] {}, stageHPx[4][2] {}, stageLP[4][2] {}, gateEnv = 0, gateGain = 1, lowKeep[2] {};
+        juce::String filterKey;
+    };
+
+    std::unique_ptr<juce::Component> createAmpEditor (AmpPlugin&);
+}

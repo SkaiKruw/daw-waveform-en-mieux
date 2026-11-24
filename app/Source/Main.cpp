@@ -6,6 +6,7 @@
 #include <JuceHeader.h>
 #include "MainComponent.h"
 #include "Preferences.h"
+#include "Updater.h"
 #include "OndeSynth.h"
 #include "OndeFx2.h"
 #include "Chains.h"
@@ -444,8 +445,8 @@ public:
         const bool openedFile = args.size() > 0 && arg.existsAsFile();
         const bool hub = ! openedFile && HubPanel::showAtStartup();
         if (openedFile)  mc->openProjectFile (arg);
-        else if (hub)    mc->newProject();          // l'écran d'accueil propose modèles et projets récents
-        else             openDemo (*mc);
+        else if (hub)    mc->newProjectFromTemplate (0);          // l'écran d'accueil propose modèles et projets récents
+        else             mc->newProject();
 
         // Première ouverture : analyse des VST3 en arrière-plan (dans des processus isolés).
         if (catalog->getVST3 (true).isEmpty() && catalog->getVST3 (false).isEmpty())
@@ -1687,6 +1688,11 @@ private:
             check (state["tracks"][0]["mute"] == juce::var (muteBefore), U ("l'état renvoyé suit le changement"));
             request ("/api/action?id=file.quit&" + k, true, st);
             check (st == 404, U ("les commandes dangereuses (Quitter…) sont refusées (") + juce::String (st) + ")");
+            // Téléphone sans code (application installée qui attend la saisie) : jamais bloqué ; code gardé.
+            for (int i = 0; i < 15; ++i) request ("/api/state", false, st);
+            request ("/api/state?" + k, false, st);
+            check (st == 200 && prefs::file().getValue ("remoteCode") == remote.getCode(),
+                   U ("requêtes sans code : pas de blocage (") + juce::String (st) + U ("), code d'appairage gardé d'une activation à l'autre"));
             int last = 0;
             for (int i = 0; i < 11; ++i) { request ("/api/state?k=000000", false, st); last = st; }
             request ("/api/state?" + k, false, st);
@@ -1715,14 +1721,27 @@ private:
             auto names = [&] { juce::StringArray n; for (auto* t : te::getAudioTracks (*mc->getEdit())) n.add (t->getName()); return n; };
             mc->newProjectFromTemplate (1);
             const auto rec = names();
-            check (rec.joinIntoString (",").startsWith ("Voix,Guitare,Basse,Batterie") && rec.size() == 5 && ! mc->getEdit()->hasChangedSinceSaved(),
-                   U ("modèle « Enregistrement » : ") + rec.joinIntoString (", "));
+            // Pistes d'enregistrement : chacune sur sa propre entrée de la carte son (s'il y en a assez).
+            juce::StringArray inputsUsed; int armed = 0;
+            for (auto* t : te::getAudioTracks (*mc->getEdit()))
+                if (mc->getContext().isTrackArmed (*t) && mc->getContext().getInstrument (*t) == nullptr) { ++armed; inputsUsed.addIfNotAlreadyThere (mc->getContext().getTrackInput (*t)); }
+            const int nInputs = mc->getContext().audioInputNames().size();
+            const bool drumsPlay = [&] { for (auto* t : te::getAudioTracks (*mc->getEdit())) for (auto* c : t->getClips()) if (drummer::isAutomatic (c)) return true; return false; }();
+            check (rec.joinIntoString (",") == U ("Batteur,Basse,Guitare gauche,Guitare droite,Voix,FX 1 — Onde Espace") && drumsPlay
+                   && armed == juce::jmin (4, nInputs) && inputsUsed.size() == armed && ! mc->getEdit()->hasChangedSinceSaved(),
+                   U ("modèle « Groupe » : ") + rec.joinIntoString (", ") + U (" ; ") + juce::String (armed) + U (" pistes armées sur ") + juce::String (inputsUsed.size())
+                   + U (" entrées distinctes (") + juce::String (nInputs) + U (" entrées sur cette carte son)"));
+            mc->newProjectFromTemplate (0);
+            check (te::getAudioTracks (*mc->getEdit()).isEmpty(), U ("projet vide : aucune piste"));
+            mc->newProjectFromTemplate (1);
 
             // Modèles personnels (sans les événements, ou avec) et paramètres de l'application.
             {
                 auto& e0 = *mc->getEdit();
                 const auto names0 = names();
+                auto countClips0 = [&] { int n = 0; for (auto* t : te::getAudioTracks (*mc->getEdit())) n += t->getClips().size(); return n; };
                 te::getAudioTracks (e0).getFirst()->insertMIDIClip ("motif", { te::TimePosition(), te::TimePosition::fromSeconds (2.0) }, nullptr);
+                const int clips0 = countClips0();
                 MainComponent::templatesFolder().deleteRecursively();
                 const bool savedEmpty = mc->saveAsTemplate (U ("Mon modèle"), false);
                 const bool savedFull = mc->saveAsTemplate (U ("Mon modèle avec événements"), true);
@@ -1735,7 +1754,7 @@ private:
                 const bool clean = ! mc->getEdit()->hasChangedSinceSaved();
                 const bool openedFull = files.size() == 2 && mc->newProjectFromUserTemplate (byName ("Mon modèle avec événements"));
                 const int clipsFull = countClips();
-                check (savedEmpty && savedFull && openedEmpty && openedFull && names1 == names0 && clipsEmpty == 0 && clipsFull == 1 && clean,
+                check (savedEmpty && savedFull && openedEmpty && openedFull && names1 == names0 && clipsEmpty == 0 && clipsFull == clips0 && clean,
                        U ("modèles personnels : ") + juce::String (files.size()) + U (" enregistrés, rouverts avec les pistes « ") + names1.joinIntoString (", ")
                        + U (" », ") + juce::String (clipsEmpty) + U (" événement sans, ") + juce::String (clipsFull) + U (" avec"));
 
@@ -1750,8 +1769,64 @@ private:
                 snapshot (settings, dir.getChildFile ("41-parametres-modeles.png"));
                 settings.showTab (3); pump (150);
                 snapshot (settings, dir.getChildFile ("42-parametres-plugins.png"));
-                check (std::abs (bpm - 97.0) < 0.01 && SettingsPanel::tabNames().size() == 5 && settings.currentTab() == 3,
-                       U ("paramètres : tempo des nouveaux projets appliqué (") + juce::String (bpm, 0) + U (" BPM), 5 onglets"));
+                check (std::abs (bpm - 97.0) < 0.01 && SettingsPanel::tabNames().size() == 6 && settings.currentTab() == 3,
+                       U ("paramètres : tempo des nouveaux projets appliqué (") + juce::String (bpm, 0) + U (" BPM), 6 onglets"));
+            }
+
+            // Sauvegarde automatique : n'écrit que si le projet a changé depuis la dernière fois.
+            {
+                mc->newProjectFromTemplate (3);
+                auto& eA = *mc->getEdit();
+                eA.getUndoManager().beginNewTransaction (U ("Renommer"));
+                te::getAudioTracks (eA).getFirst()->setName ("Guitare folk");
+                const bool first = mc->autosave();
+                const bool second = mc->autosave();
+                eA.getUndoManager().beginNewTransaction (U ("Renommer"));
+                te::getAudioTracks (eA).getFirst()->setName ("Guitare");
+                const bool third = mc->autosave();
+                check (first && ! second && third, U ("sauvegarde automatique : écrite après une modification, rien quand rien n'a changé"));
+
+                // Entrées : chaque piste a la sienne ; deux pistes armées en même temps.
+                auto& cA = mc->getContext();
+                const auto ins = cA.audioInputNames();
+                auto tracksA = te::getAudioTracks (eA);
+                if (ins.size() >= 2 && tracksA.size() >= 2)
+                {
+                    cA.setTrackArmed (*tracksA[0], false); cA.setTrackArmed (*tracksA[1], false);
+                    cA.setTrackInput (*tracksA[0], ins[1]);
+                    cA.setTrackInput (*tracksA[1], ins[0]);
+                    cA.setTrackArmed (*tracksA[0], true); cA.setTrackArmed (*tracksA[1], true);
+                    const bool both = cA.isTrackArmed (*tracksA[0]) && cA.isTrackArmed (*tracksA[1]);
+                    check (both && cA.getTrackInput (*tracksA[0]) == ins[1] && cA.getTrackInput (*tracksA[1]) == ins[0],
+                           U ("entrées : « ") + tracksA[0]->getName() + U (" » sur ") + ins[1] + U (", « ") + tracksA[1]->getName() + U (" » sur ") + ins[0]
+                           + U (", les deux armées ensemble (") + juce::String (ins.size()) + U (" entrées mono)"));
+                }
+                else check (true, U ("entrées : moins de deux entrées sur cette carte son (vérification passée)"));
+
+                // Deux pistes instrument armées ensemble : le clavier les enregistre toutes les deux.
+                auto* i1 = cA.addInstrumentTrack();
+                auto* i2 = cA.addInstrumentTrack();
+                cA.setTrackArmed (*i1, true); cA.setTrackArmed (*i2, true);
+                cA.selectTrack (i2);
+                check (cA.isTrackArmed (*i1) && cA.isTrackArmed (*i2), U ("deux pistes instrument armées en même temps"));
+
+                // Métronome : réglages par défaut appliqués aux nouveaux projets, sons fabriqués par Onde.
+                prefs::file().setValue ("clickVolume", 0.4); prefs::file().setValue ("countIn", 1);
+                mc->newProjectFromTemplate (0);
+                auto& eB = *mc->getEdit();
+                const bool metro = std::abs (eB.getClickTrackVolume() - 0.4f) < 0.01f && eB.getCountInMode() == te::Edit::CountIn::oneBar;
+                prefs::file().removeValue ("clickVolume"); prefs::file().removeValue ("countIn");
+                prefs::applyClickSound (mc->getContext().engine);
+                const auto clickDir = juce::File::getSpecialLocation (juce::File::userApplicationDataDirectory).getChildFile ("Onde").getChildFile ("clics");
+                check (metro && clickDir.getChildFile ("0-fort.wav").existsAsFile(), U ("métronome : volume 40 %, décompte d'une mesure, sons d'Onde écrits"));
+
+                // Mises à jour : comparaison de versions et lecture de la réponse du dépôt.
+                const auto rel = updates::parseRelease (R"({"tag_name":"v0.7.1","html_url":"https://example.org/r","body":"x"})");
+                check (updates::isNewer ("0.7", "0.6") && ! updates::isNewer ("0.6", "0.6") && updates::isNewer ("v0.6.1", "0.6") && ! updates::isNewer ("0.5.9", "0.6")
+                       && rel.ok && rel.newer && rel.latest == "0.7.1",
+                       U ("mises à jour : 0.7 plus récente que 0.6, réponse lue (") + rel.latest + ")");
+                AboutPanel about2;
+                snapshot (about2, dir.getChildFile ("43-a-propos.png"));
             }
             mc->newProjectFromTemplate (2);
             const auto prod = names();
@@ -1763,10 +1838,10 @@ private:
                     ++instruments;
                     if (auto* s = dynamic_cast<ondefx::SynthPlugin*> (inst)) sounds.add (s->getPresetName());
                 }
-            check (prod.joinIntoString (",").startsWith ("Batterie,Basse,Accords,Nappe,Lead,Voix") && instruments == 5
-                   && sounds.joinIntoString (",") == U ("Batterie acoustique,Basse synthé,Piano électrique,Nappe chaude,Lead scie")
+            check (prod.joinIntoString (",").startsWith (U ("Batteur,808,Accords,Mélodie,Voix")) && instruments == 4
+                   && sounds.joinIntoString (",") == U ("Batterie acoustique,Sub 808,Piano électrique,Pluck")
                    && ! mc->getEdit()->hasChangedSinceSaved(),
-                   U ("modèle « Production » : ") + prod.joinIntoString (", ") + U (" (sons : ") + sounds.joinIntoString (", ") + ")");
+                   U ("modèle « Beat » : ") + prod.joinIntoString (", ") + U (" (sons : ") + sounds.joinIntoString (", ") + ")");
             const auto saved = dir.getChildFile (U ("projet récent.onde"));
             check (mc->saveProjectTo (saved) && MainComponent::recentProjects()[0] == saved.getFullPathName(),
                    U ("un projet enregistré passe en tête des projets récents"));
@@ -2469,6 +2544,48 @@ private:
                     modPtr->deleteFromParent();
                 }
 
+                // Onde Ampli : le clair reste presque propre, le moderne sature fort, la porte coupe le souffle, crête maîtrisée.
+                {
+                    auto ampPtr = ed.getPluginCache().createNewPlugin (ondefx::AmpPlugin::xmlTypeName, {});
+                    auto* amp = dynamic_cast<ondefx::AmpPlugin*> (ampPtr.get());
+                    auto run = [&] (int model, float gain, float gate, float amplitude)
+                    {
+                        amp->param ("model")->setParameter ((float) model, juce::sendNotification);
+                        amp->param ("gain")->setParameter (gain, juce::sendNotification);
+                        amp->param ("gate")->setParameter (gate, juce::sendNotification);
+                        amp->param ("cab")->setParameter (0.0f, juce::sendNotification);
+                        amp->initialise ({ te::TimePosition(), 48000.0, 512 });
+                        juce::AudioBuffer<float> b (2, 48000);
+                        for (int i = 0; i < b.getNumSamples(); ++i)
+                            for (int c = 0; c < 2; ++c) b.setSample (c, i, amplitude * (float) std::sin (juce::MathConstants<double>::twoPi * 220.0 * i / 48000.0));
+                        for (int s = 0; s < b.getNumSamples(); s += 512)
+                        {
+                            te::PluginRenderContext rc (&b, s, juce::jmin (512, b.getNumSamples() - s), nullptr, 0.0, {}, true, false, true, false);
+                            amp->applyToBuffer (rc);
+                        }
+                        return b;
+                    };
+                    auto harm = [] (const juce::AudioBuffer<float>& b, double hz)
+                    {
+                        const double w = juce::MathConstants<double>::twoPi * hz / 48000.0, coeff = 2.0 * std::cos (w);
+                        double q1 = 0, q2 = 0;
+                        for (int i = 24000; i < 48000; ++i) { const double q0 = coeff * q1 - q2 + b.getSample (0, i); q2 = q1; q1 = q0; }
+                        return 10.0 * std::log10 (std::max (1.0e-20, q1 * q1 + q2 * q2 - q1 * q2 * coeff));
+                    };
+                    const auto clean = run (0, 1.0f, -90.0f, 0.3f), heavy = run (3, 8.0f, -90.0f, 0.3f);
+                    const double thdClean = harm (clean, 660.0) - harm (clean, 220.0), thdHeavy = harm (heavy, 660.0) - harm (heavy, 220.0);
+                    const auto hiss = run (3, 8.0f, -50.0f, 0.001f), hissOpen = run (3, 8.0f, -90.0f, 0.001f);
+                    const float gated = hiss.getRMSLevel (0, 24000, 24000), open = hissOpen.getRMSLevel (0, 24000, 24000);
+                    const float pk = juce::Decibels::gainToDecibels (heavy.getMagnitude (0, 0, heavy.getNumSamples()));
+                    bool finite = true;
+                    for (int i = 0; i < heavy.getNumSamples(); ++i) finite = finite && std::isfinite (heavy.getSample (0, i));
+                    check (finite && thdClean < -25.0 && thdHeavy > -12.0 && gated < open * 0.05f && pk < 6.0f && amp->getLatencySeconds() > 0.0,
+                           U ("Onde Ampli : harmonique 3 du clair ") + juce::String (thdClean, 1) + U (" dB, du moderne ") + juce::String (thdHeavy, 1)
+                           + U (" dB ; porte : souffle ") + juce::String (juce::Decibels::gainToDecibels (gated), 0) + U (" dB au lieu de ")
+                           + juce::String (juce::Decibels::gainToDecibels (open), 0) + U (" dB ; crête ") + juce::String (pk, 1) + " dBFS");
+                    if (auto e = ondefx::createEditor (*amp)) { pump (200); snapshot (*e, dir.getChildFile ("20c-onde-ampli.png")); }
+                }
+
                 // Écho et espace sur un clic isolé à 0,5 s.
                 const auto click = dir.getChildFile ("clic.wav");
                 {
@@ -2538,7 +2655,7 @@ private:
                 um.beginNewTransaction (U ("Chaîne « Guitare saturée »"));
                 chains::apply (*t, chains::find (U ("Guitare saturée")));
                 te::MacroParameter* drive = nullptr;
-                for (auto m : chains::quickControls (*t)) if (m->getParameterName() == "Saturation") drive = m;
+                for (auto m : chains::quickControls (*t)) if (m->getParameterName() == "Gain") drive = m;
                 double h3lo = 0, h3hi = 0;
                 if (drive != nullptr)
                 {
@@ -2558,11 +2675,11 @@ private:
                         for (auto* rt : te::getAudioTracks (*reopened))
                             if (chains::currentChain (*rt) == U ("Guitare saturée"))
                                 for (auto m : chains::quickControls (*rt))
-                                    if (m->getParameterName() == "Saturation" && std::abs (m->getCurrentValue() - 0.8f) < 0.01f) chainKept = true;
+                                    if (m->getParameterName() == "Gain" && std::abs (m->getCurrentValue() - 0.8f) < 0.01f) chainKept = true;
                         EditContext::destroyEdit (reopened);
                     }
-                check (drive != nullptr && h3hi > h3lo + 3.0 && chainKept,
-                       U ("commande rapide « Saturation » : harmonique 3 à ") + juce::String (h3lo, 1) + U (" dB (0 %) puis ") + juce::String (h3hi, 1)
+                check (drive != nullptr && h3hi > h3lo + 1.5 && chainKept,      // ampli lead : déjà saturé au minimum, la commande ajoute du grain
+                       U ("commande rapide « Gain » (ampli) : harmonique 3 à ") + juce::String (h3lo, 1) + U (" dB (0 %) puis ") + juce::String (h3hi, 1)
                        + U (" dB (100 %) ; chaîne et réglage retrouvés après réouverture (") + juce::String (chainKept ? "oui" : "non") + ")");
                 c4.selectTrack (t);
                 c4.changed();
@@ -2909,6 +3026,22 @@ private:
                 }
                 check (tab != nullptr && placed && restrung && twoDigits && ascii && bass && sounds,
                        U ("tablature : cases écrites (Mi grave 3 = Sol), même note passée sur la corde de Si (case 5), « 12 » tapé = case 12, texte copiable, accordage basse, son au rendu"));
+                // Accordage libre retenu pour la piste ; portée dans la clé de l'instrument.
+                if (tab != nullptr)
+                {
+                    tab->setCustomTuning ({ 64, 59, 55, 50, 45, 38, 33 }, TabView::trebleOctave);       // 7 cordes, La grave, Ré
+                    const auto saved = gt->state.getProperty ("ondeTuning").toString();
+                    tab->setTuning (0);
+                    tab->setCustomTuning ({ 64, 59, 55, 50, 45, 38, 33 }, TabView::trebleOctave);
+                    snapshot (*tab, dir.getChildFile ("31b-tablature-portee.png"));
+                    tab->setTuning (0);
+                    const bool steps = TabView::staffStep (64, TabView::treble) == 0 && TabView::staffStep (40, TabView::trebleOctave) == -7
+                                    && TabView::staffStep (28, TabView::bassOctave) == -2 && TabView::staffStep (60, TabView::alto) == 4
+                                    && TabView::staffStep (43, TabView::bass) == 0;
+                    check (saved.endsWith ("|0|64,59,55,50,45,38,33") && steps && TabView::tunings().size() >= 17,
+                           U ("tablature : accordage libre retenu pour la piste (« ") + saved.upToFirstOccurrenceOf ("|", false, false)
+                           + U (" »), notes placées sur la portée en clé de sol octaviée, fa octaviée, ut et fa ; ") + juce::String ((int) TabView::tunings().size()) + U (" accordages prêts"));
+                }
                 mc->showView (0);
                 ed.deleteTrack (gt);
                 c4.changed();

@@ -1,4 +1,5 @@
 #include "OndeFx2.h"
+#include <complex>
 #include "ParamControls.h"
 #include "Theme.h"
 
@@ -754,10 +755,12 @@ namespace ondefx
     }
 
     std::unique_ptr<juce::Component> createModulationEditor (ModulationPlugin&);
+    std::unique_ptr<juce::Component> createAmpEditor (AmpPlugin&);
 
     std::unique_ptr<juce::Component> createFx2Editor (te::Plugin& p)
     {
         if (auto* m = dynamic_cast<ModulationPlugin*> (&p)) return createModulationEditor (*m);
+        if (auto* a = dynamic_cast<AmpPlugin*> (&p)) return createAmpEditor (*a);
         if (auto* s = dynamic_cast<SaturationPlugin*> (&p)) return std::make_unique<SaturationEditor> (*s);
         if (auto* e = dynamic_cast<EchoPlugin*> (&p))       return std::make_unique<EchoEditor> (*e);
         if (auto* r = dynamic_cast<SpacePlugin*> (&p))      return std::make_unique<SpaceEditor> (*r);
@@ -1088,4 +1091,316 @@ namespace ondefx
     }
 
     std::unique_ptr<juce::Component> createModulationEditor (ModulationPlugin& m) { return std::make_unique<ModulationEditor> (m); }
+}
+
+namespace ondefx
+{
+    //==============================================================================
+    const char* AmpPlugin::xmlTypeName = "ondeAmp";
+
+    namespace
+    {
+        // Modèles : étages du préampli, gain (dB, bouton à 0 puis à 10), polarisation (asymétrie), passe-bas entre
+        // étages, coupe-bas d'entrée (serrage), médium de l'égaliseur, attaque de l'étage de puissance.
+        struct AmpModel { int stages; float minDb, maxDb, bias, interLP, preHP, midHz, power; };
+        const AmpModel ampModels[5] = {
+            { 1,  0.0f, 18.0f, 0.05f, 12000.0f,  70.0f, 650.0f, 0.6f },     // clair
+            { 2,  6.0f, 32.0f, 0.15f,  9000.0f,  90.0f, 650.0f, 1.0f },     // crunch
+            { 3, 12.0f, 48.0f, 0.20f,  7500.0f, 110.0f, 700.0f, 1.3f },     // lead
+            { 4, 18.0f, 62.0f, 0.10f,  7000.0f, 160.0f, 550.0f, 1.2f },     // moderne
+            { 2,  0.0f, 26.0f, 0.10f,  6000.0f,  30.0f, 500.0f, 0.8f } };   // basse
+        struct Cab { float hp, hpQ, res, resDb, resQ, dip, dipDb, lp; };
+        const Cab cabs[5] = {
+            { 20, 0.7f,   0, 0, 1,    0,  0, 20000 },
+            { 70, 0.9f, 110, 3, 1.2f, 0,  0,  6000 },
+            { 75, 1.0f, 100, 4, 1.3f, 450, -1.5f, 5200 },
+            { 85, 1.1f,  95, 5, 1.5f, 400, -2.5f, 4800 },
+            { 40, 0.8f,  70, 3, 1.0f, 800, -3.0f, 3500 } };
+    }
+
+    void AmpPlugin::Biquad::set (int type, double f, double q, double gainDb, double fs)
+    {
+        f = juce::jlimit (10.0, fs * 0.45, f);
+        const double w = juce::MathConstants<double>::twoPi * f / fs, cw = std::cos (w), sw = std::sin (w), alpha = sw / (2.0 * q);
+        const double A = std::pow (10.0, gainDb / 40.0);
+        double B0 = 1, B1 = 0, B2 = 0, A0 = 1, A1 = 0, A2 = 0;
+        switch (type)
+        {
+            case 0: B0 = (1 - cw) / 2; B1 = 1 - cw; B2 = (1 - cw) / 2; A0 = 1 + alpha; A1 = -2 * cw; A2 = 1 - alpha; break;
+            case 1: B0 = (1 + cw) / 2; B1 = -(1 + cw); B2 = (1 + cw) / 2; A0 = 1 + alpha; A1 = -2 * cw; A2 = 1 - alpha; break;
+            case 2: B0 = 1 + alpha * A; B1 = -2 * cw; B2 = 1 - alpha * A; A0 = 1 + alpha / A; A1 = -2 * cw; A2 = 1 - alpha / A; break;
+            case 3: { const double s = 2 * std::sqrt (A) * alpha;
+                      B0 = A * ((A + 1) - (A - 1) * cw + s); B1 = 2 * A * ((A - 1) - (A + 1) * cw); B2 = A * ((A + 1) - (A - 1) * cw - s);
+                      A0 = (A + 1) + (A - 1) * cw + s; A1 = -2 * ((A - 1) + (A + 1) * cw); A2 = (A + 1) + (A - 1) * cw - s; break; }
+            default: { const double s = 2 * std::sqrt (A) * alpha;
+                      B0 = A * ((A + 1) + (A - 1) * cw + s); B1 = -2 * A * ((A - 1) + (A + 1) * cw); B2 = A * ((A + 1) + (A - 1) * cw - s);
+                      A0 = (A + 1) - (A - 1) * cw + s; A1 = 2 * ((A - 1) - (A + 1) * cw); A2 = (A + 1) - (A - 1) * cw - s; break; }
+        }
+        b0 = (float) (B0 / A0); b1 = (float) (B1 / A0); b2 = (float) (B2 / A0); a1 = (float) (A1 / A0); a2 = (float) (A2 / A0);
+    }
+
+    float AmpPlugin::Biquad::magnitudeDb (double hz, double fs) const
+    {
+        const std::complex<double> z = std::polar (1.0, -juce::MathConstants<double>::twoPi * hz / fs);
+        const auto num = (double) b0 + (double) b1 * z + (double) b2 * z * z, den = 1.0 + (double) a1 * z + (double) a2 * z * z;
+        return (float) (20.0 * std::log10 (std::max (1.0e-9, std::abs (num / den))));
+    }
+
+    AmpPlugin::AmpPlugin (te::PluginCreationInfo info) : OndeEffect (info)
+    {
+        auto tenth = [] (float v) { return juce::String (v, 1); };
+        declare ("model", juce::String::fromUTF8 ("Modèle"), { 0.0f, 4.0f, 1.0f }, 1.0f, choiceText (modelNames, 5));
+        declare ("gate", "Porte de bruit", { -90.0f, -30.0f }, -90.0f, [] (float v) { return v <= -89.5f ? juce::String::fromUTF8 ("coupée") : juce::String (juce::roundToInt (v)) + " dB"; });
+        declare ("boost", "Boost", { 0.0f, 10.0f }, 0.0f, tenth);
+        declare ("gain", "Gain", { 0.0f, 10.0f }, 5.0f, tenth);
+        declare ("bass", "Graves", { 0.0f, 10.0f }, 5.0f, tenth);
+        declare ("mid", juce::String::fromUTF8 ("Médiums"), { 0.0f, 10.0f }, 5.0f, tenth);
+        declare ("treble", "Aigus", { 0.0f, 10.0f }, 5.0f, tenth);
+        declare ("presence", juce::String::fromUTF8 ("Présence"), { 0.0f, 10.0f }, 5.0f, tenth);
+        declare ("cab", "Baffle", { 0.0f, 4.0f, 1.0f }, 3.0f, choiceText (cabNames, 5));
+        declare ("mic", "Micro (centre / bord)", { 0.0f, 1.0f }, 0.3f, [] (float v) { return v < 0.15f ? juce::String ("centre") : v > 0.85f ? juce::String ("bord") : juce::String (juce::roundToInt (v * 100)) + " %"; });
+        declare ("level", "Volume", { -24.0f, 12.0f }, 0.0f, dbText);
+    }
+
+    void AmpPlugin::initialise (const te::PluginInitialisationInfo& info)
+    {
+        rate = info.sampleRate;
+        preparedBlock = juce::jlimit (64, 8192, info.blockSizeSamples * 2);
+        oversampling = std::make_unique<juce::dsp::Oversampling<float>> (2, 2, juce::dsp::Oversampling<float>::filterHalfBandPolyphaseIIR, true, false);
+        oversampling->initProcessing ((size_t) preparedBlock);
+        filterKey.clear();
+        reset();
+    }
+
+    void AmpPlugin::reset()
+    {
+        if (oversampling) oversampling->reset();
+        for (auto* b : { &boostMid, &inputHP, &tight }) b->reset();
+        for (auto& b : tone) b.reset();
+        for (auto& b : cab) b.reset();
+        for (int s = 0; s < 4; ++s) for (int c = 0; c < 2; ++c) stageHP[s][c] = stageHPx[s][c] = stageLP[s][c] = 0;
+        gateEnv = 0; gateGain = 1; lowKeep[0] = lowKeep[1] = 0;
+    }
+
+    double AmpPlugin::getLatencySeconds() { return oversampling ? oversampling->getLatencyInSamples() / rate : 0.0; }
+
+    void AmpPlugin::updateFilters()
+    {
+        const int m = juce::jlimit (0, 4, juce::roundToInt (value ("model"))), c = juce::jlimit (0, 4, juce::roundToInt (value ("cab")));
+        juce::String key; key << m << c;
+        for (auto* id : { "bass", "mid", "treble", "presence", "mic", "boost" }) key << ";" << value (id);
+        if (key == filterKey) return;
+        filterKey = key;
+        const auto& md = ampModels[m];
+        const double fs = rate;
+        inputHP.set (1, md.preHP, 0.7, 0, fs);
+        boostMid.set (2, 720, 0.7, value ("boost") * 0.8, fs);
+        tight.set (1, 60.0 + value ("boost") * 25.0, 0.7, 0, fs);              // le boost resserre le grave
+        tone[0].set (3, m == 4 ? 80 : 120, 0.7, (value ("bass") - 5.0f) * 2.4f, fs);
+        tone[1].set (2, md.midHz, 0.8, (value ("mid") - 5.0f) * 2.4f, fs);
+        tone[2].set (4, 3000, 0.7, (value ("treble") - 5.0f) * 2.4f, fs);
+        tone[3].set (4, 5500, 0.7, (value ("presence") - 5.0f) * 1.8f, fs);
+        const auto& cb = cabs[c];
+        const double lp = cb.lp * (1.0 - 0.4 * value ("mic"));
+        cab[0].set (1, cb.hp, cb.hpQ, 0, fs);
+        cab[1].set (2, juce::jmax (20.0f, cb.res), cb.resQ, cb.resDb, fs);
+        cab[2].set (2, juce::jmax (20.0f, cb.dip), 1.0, cb.dipDb, fs);
+        cab[3].set (0, lp, 0.75, 0, fs);
+        cab[4].set (0, lp * 1.15, 0.9, 0, fs);
+    }
+
+    float AmpPlugin::responseDb (float hz) const
+    {
+        float db = 0;
+        for (auto& b : tone) db += b.magnitudeDb (hz, rate);
+        if (juce::roundToInt (value ("cab")) > 0) for (auto& b : cab) db += b.magnitudeDb (hz, rate);
+        return db;
+    }
+
+    void AmpPlugin::applyToBuffer (const te::PluginRenderContext& fc)
+    {
+        if (fc.destBuffer == nullptr || oversampling == nullptr) return;
+        auto& buf = *fc.destBuffer;
+        const int chans = juce::jmin (2, buf.getNumChannels());
+        if (chans == 0) return;
+        updateFilters();
+        const int m = juce::jlimit (0, 4, juce::roundToInt (value ("model")));
+        const auto& md = ampModels[m];
+        const bool withCab = juce::roundToInt (value ("cab")) > 0;
+        const float gateDb = value ("gate"), boost = value ("boost");
+        const float boostGain = dbToGain (boost * 1.8f);
+        const float totalDb = md.minDb + (md.maxDb - md.minDb) * value ("gain") / 10.0f;
+        const float perStage = dbToGain (totalDb / md.stages);
+        const float osRate = (float) rate * 4.0f;
+        const float lpC = onePoleCoef (md.interLP, osRate), hpC = std::exp (-juce::MathConstants<float>::twoPi * 30.0f / osRate);
+        const float level = dbToGain (value ("level")) * (m == 0 ? 0.9f : 0.55f);
+        const float gateThr = dbToGain (gateDb);
+        const float atk = 1.0f - std::exp (-1.0f / (0.001f * (float) rate)), rel = 1.0f - std::exp (-1.0f / (0.06f * (float) rate));
+        const float envRel = std::exp (-1.0f / (0.05f * (float) rate));
+        const float keepC = onePoleCoef (220.0f, rate);
+        {
+            float pk = 0;
+            for (int c = 0; c < chans; ++c) pk = std::max (pk, buf.getMagnitude (c, fc.bufferStartSample, fc.bufferNumSamples));
+            inputDb = juce::Decibels::gainToDecibels (pk, -100.0f);
+        }
+        for (int done = 0; done < fc.bufferNumSamples;)
+        {
+            const int n = juce::jmin (preparedBlock, fc.bufferNumSamples - done);
+            const int start = fc.bufferStartSample + done;
+            // Entrée : porte de bruit, coupe-bas du modèle, boost ; graves propres gardés pour la basse.
+            for (int i = 0; i < n; ++i)
+            {
+                float peak = 0;
+                for (int c = 0; c < chans; ++c) peak = std::max (peak, std::abs (buf.getSample (c, start + i)));
+                gateEnv = std::max (peak, gateEnv * envRel);
+                const float target = gateDb <= -89.5f || gateEnv > gateThr ? 1.0f : 0.0f;
+                gateGain += (target > gateGain ? atk : rel) * (target - gateGain);
+                for (int c = 0; c < chans; ++c)
+                {
+                    float x = buf.getSample (c, start + i) * gateGain;
+                    if (m == 4) lowKeep[c] += keepC * (x - lowKeep[c]);
+                    x = inputHP.process (x, c);
+                    if (boost > 0.01f) x = std::tanh (boostMid.process (tight.process (x, c), c) * boostGain);
+                    buf.setSample (c, start + i, x);
+                }
+            }
+            gateOpen = gateGain;
+            // Préampli suréchantillonné : étages à lampe (tanh polarisée), liaison (coupe-bas), passe-bas entre étages.
+            juce::dsp::AudioBlock<float> block (buf.getArrayOfWritePointers(), (size_t) chans, (size_t) start, (size_t) n);
+            auto up = oversampling->processSamplesUp (block);
+            const float biasOut = std::tanh (md.bias);
+            for (size_t c = 0; c < up.getNumChannels(); ++c)
+            {
+                float* d = up.getChannelPointer (c);
+                for (size_t i = 0; i < up.getNumSamples(); ++i)
+                {
+                    float x = d[i];
+                    for (int s = 0; s < md.stages; ++s)
+                    {
+                        x = std::tanh (x * perStage + md.bias) - biasOut;
+                        const float hp = hpC * (stageHP[s][c] + x - stageHPx[s][c]);
+                        stageHPx[s][c] = x; stageHP[s][c] = hp; x = hp;
+                        stageLP[s][c] += lpC * (x - stageLP[s][c]); x = stageLP[s][c];
+                    }
+                    d[i] = x;
+                }
+            }
+            oversampling->processSamplesDown (block);
+            // Égaliseur, étage de puissance, baffle, volume.
+            for (int c = 0; c < chans; ++c)
+            {
+                float* d = buf.getWritePointer (c, start);
+                for (int i = 0; i < n; ++i)
+                {
+                    float y = d[i];
+                    for (auto& b : tone) y = b.process (y, c);
+                    y = std::tanh (y * md.power) / md.power;
+                    if (m == 4) y += lowKeep[c] * 0.6f;                      // basse : fondamental propre conservé
+                    if (withCab) for (auto& b : cab) y = b.process (y, c);
+                    d[i] = y * level;
+                }
+            }
+            done += n;
+        }
+    }
+
+    namespace
+    {
+        // Fenêtre : modèles, façade de l'ampli (lampe qui s'allume avec le gain), réponse égaliseur + baffle.
+        class AmpEditor  : public FxWindow
+        {
+        public:
+            explicit AmpEditor (AmpPlugin& p) : FxWindow (p, U8 ("Ampli guitare et basse · porte, boost, préampli à lampes, baffle"), juce::Colour (0xffe5a04e)), amp (p)
+            {
+                for (int i = 0; i < 5; ++i)
+                {
+                    auto* b = modelButtons.add (new juce::TextButton (AmpPlugin::modelNames[i]));
+                    b->setColour (juce::TextButton::buttonOnColourId, colour);
+                    b->setColour (juce::TextButton::textColourOnId, juce::Colours::black);
+                    b->onClick = [this, i] { amp.edit.getUndoManager().beginNewTransaction (U8 ("Modèle d'ampli")); amp.setStored ("model", (float) i); };
+                    models.addAndMakeVisible (b);
+                }
+                addAndMakeVisible (models);
+                knob ("gate", "Porte"); knob ("boost", "Boost"); knob ("gain", "Gain");
+                knob ("bass", "Graves"); knob ("mid", "Médiums"); knob ("treble", "Aigus");
+                knob ("presence", "Présence"); knob ("mic", "Micro"); knob ("level", "Volume");
+                auto* cabChoice = new ondeui::ParamChoice (amp.param ("cab"), "Baffle");
+                controls.add (cabChoice); addAndMakeVisible (cabChoice);
+                preset ("Clair brillant", { { "model", 0 }, { "gate", -90 }, { "boost", 0 }, { "gain", 4 }, { "bass", 5 }, { "mid", 5 }, { "treble", 6.5f }, { "presence", 6 }, { "cab", 2 }, { "mic", 0.3f } });
+                preset ("Crunch rock", { { "model", 1 }, { "gate", -90 }, { "boost", 0 }, { "gain", 6 }, { "bass", 5 }, { "mid", 6.5f }, { "treble", 6 }, { "presence", 5 }, { "cab", 2 }, { "mic", 0.35f } });
+                preset (U8 ("Rock moderne épais"), { { "model", 2 }, { "gate", -70 }, { "boost", 3 }, { "gain", 6.5f }, { "bass", 6 }, { "mid", 6 }, { "treble", 5.5f }, { "presence", 5.5f }, { "cab", 3 }, { "mic", 0.4f } });
+                preset (U8 ("Métal serré"), { { "model", 3 }, { "gate", -58 }, { "boost", 7 }, { "gain", 6 }, { "bass", 5.5f }, { "mid", 4.5f }, { "treble", 6 }, { "presence", 6.5f }, { "cab", 3 }, { "mic", 0.25f } });
+                preset ("Djent", { { "model", 3 }, { "gate", -52 }, { "boost", 9 }, { "gain", 5 }, { "bass", 4.5f }, { "mid", 6 }, { "treble", 6.5f }, { "presence", 7 }, { "cab", 3 }, { "mic", 0.15f } });
+                preset ("Basse grasse", { { "model", 4 }, { "gate", -90 }, { "boost", 0 }, { "gain", 5 }, { "bass", 6 }, { "mid", 5.5f }, { "treble", 4.5f }, { "presence", 4 }, { "cab", 4 }, { "mic", 0.3f } });
+                setSize (900, 520);
+            }
+            void resized() override
+            {
+                layout (30, &models);
+                const int w = models.getWidth() / 5;
+                for (int i = 0; i < modelButtons.size(); ++i) modelButtons[i]->setBounds (i * w, 0, w - 4, models.getHeight());
+            }
+        private:
+            void paintDisplay (juce::Graphics& g, juce::Rectangle<float> r) override
+            {
+                const int m = juce::jlimit (0, 4, juce::roundToInt (amp.value ("model")));
+                const float gain = amp.value ("gain") / 10.0f;
+                // Façade : tête d'ampli, grille, lampes qui rougeoient avec le gain, voyant de la porte de bruit.
+                auto head = r.removeFromTop (r.getHeight() * 0.42f).reduced (4.0f, 2.0f);
+                g.setGradientFill (juce::ColourGradient (juce::Colour (0xff2a2622), 0, head.getY(), juce::Colour (0xff15130f), 0, head.getBottom(), false));
+                g.fillRoundedRectangle (head, 8.0f);
+                g.setColour (colour.withAlpha (0.5f)); g.drawRoundedRectangle (head, 8.0f, 1.2f);
+                auto panel = head.reduced (12.0f, 10.0f);
+                auto grille = panel.removeFromLeft (panel.getWidth() * 0.42f);
+                g.setColour (juce::Colour (0xff3a332a));
+                for (float y = grille.getY(); y < grille.getBottom(); y += 5.0f) g.drawHorizontalLine ((int) y, grille.getX(), grille.getRight());
+                panel.removeFromLeft (14.0f);
+                g.setColour (colour); g.setFont (theme::ui (22.0f, true));
+                g.drawText (juce::String::fromUTF8 ("ONDE ") + juce::String::fromUTF8 (AmpPlugin::modelNames[m]).toUpperCase(), panel.removeFromTop (30.0f), juce::Justification::centredLeft);
+                for (int k = 0; k < 4; ++k)
+                {
+                    auto tube = juce::Rectangle<float> (panel.getX() + k * 26.0f, panel.getY() + 6.0f, 16.0f, 30.0f);
+                    g.setColour (juce::Colour (0xff3b3b3b)); g.fillRoundedRectangle (tube, 7.0f);
+                    const float glow = juce::jlimit (0.0f, 1.0f, k < ampModels[m].stages ? 0.25f + 0.75f * gain : 0.1f);
+                    g.setColour (juce::Colour (0xffff7a2a).withAlpha (glow)); g.fillEllipse (tube.reduced (4.0f, 8.0f));
+                }
+                const bool open = amp.gateOpen.load() > 0.5f || amp.value ("gate") <= -89.5f;
+                g.setColour (open ? theme::ok : theme::rec); g.fillEllipse (panel.getRight() - 14.0f, panel.getY() + 10.0f, 9.0f, 9.0f);
+                g.setColour (theme::muted); g.setFont (theme::ui (10.5f));
+                g.drawText (open ? U8 ("porte ouverte") : U8 ("porte fermée"), (int) panel.getRight() - 110, (int) panel.getY() + 22, 104, 14, juce::Justification::centredRight);
+                g.drawText (juce::String::fromUTF8 (AmpPlugin::cabNames[juce::jlimit (0, 4, juce::roundToInt (amp.value ("cab")))]), (int) panel.getX(), (int) panel.getBottom() - 14, 200, 14, juce::Justification::centredLeft);
+                // Réponse : égaliseur de l'ampli + baffle.
+                r.removeFromTop (8.0f);
+                g.setColour (theme::dim); g.setFont (theme::ui (10.0f, true));
+                g.drawText (U8 ("RÉPONSE DE L'ÉGALISEUR ET DU BAFFLE"), r.removeFromTop (14.0f).toNearestInt(), juce::Justification::centredLeft);
+                auto xOf = [&] (float f) { return r.getX() + r.getWidth() * std::log (f / 40.0f) / std::log (500.0f); };
+                auto yOf = [&] (float db) { return r.getCentreY() - juce::jlimit (-30.0f, 18.0f, db) * r.getHeight() / 48.0f; };
+                g.setColour (gridLine);
+                for (float f : { 100.0f, 1000.0f, 10000.0f }) g.drawVerticalLine ((int) xOf (f), r.getY(), r.getBottom());
+                g.drawHorizontalLine ((int) yOf (0.0f), r.getX(), r.getRight());
+                juce::Path p;
+                for (int i = 0; i <= 160; ++i)
+                {
+                    const float f = 40.0f * std::pow (500.0f, i / 160.0f);
+                    const float x = xOf (f), y = yOf (amp.responseDb (f));
+                    if (i == 0) p.startNewSubPath (x, y); else p.lineTo (x, y);
+                }
+                g.setColour (colour); g.strokePath (p, juce::PathStrokeType (2.0f));
+                g.setColour (theme::dim); g.setFont (theme::ui (9.5f));
+                for (auto [f, t] : { std::pair<float, const char*> { 100.0f, "100" }, { 1000.0f, "1k" }, { 10000.0f, "10k" } })
+                    g.drawText (t, (int) xOf (f) + 3, (int) r.getBottom() - 12, 30, 12, juce::Justification::centredLeft);
+            }
+            void timerCallback() override
+            {
+                const int m = juce::roundToInt (amp.value ("model"));
+                for (int i = 0; i < modelButtons.size(); ++i) modelButtons[i]->setToggleState (i == m, juce::dontSendNotification);
+                FxWindow::timerCallback();
+            }
+            AmpPlugin& amp;
+            juce::Component models;
+            juce::OwnedArray<juce::TextButton> modelButtons;
+        };
+    }
+
+    std::unique_ptr<juce::Component> createAmpEditor (AmpPlugin& a) { return std::make_unique<AmpEditor> (a); }
 }

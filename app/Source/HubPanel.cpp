@@ -45,6 +45,35 @@ namespace
                     if (k == 0) g.fillRoundedRectangle (c, 3.0f); else g.drawRoundedRectangle (c, 3.0f, 2.0f);
                 }
                 break;
+            case 5:   // groupe : une guitare (caisse et manche)
+            {
+                auto b = juce::Rectangle<float> (r.getX() + r.getWidth() * 0.12f, r.getCentreY() - r.getHeight() * 0.05f, r.getWidth() * 0.42f, r.getHeight() * 0.42f);
+                g.fillEllipse (b);
+                g.fillEllipse (b.withSizeKeepingCentre (b.getWidth() * 0.8f, b.getHeight() * 0.8f).translated (b.getWidth() * 0.3f, -b.getHeight() * 0.35f));
+                p.startNewSubPath (b.getCentreX() + b.getWidth() * 0.3f, b.getCentreY() - b.getHeight() * 0.3f);
+                p.lineTo (r.getRight() - r.getWidth() * 0.1f, r.getY() + r.getHeight() * 0.12f);
+                g.strokePath (p, juce::PathStrokeType (3.0f, juce::PathStrokeType::curved, juce::PathStrokeType::rounded));
+                break;
+            }
+            case 6:   // beat : pads
+                for (int i = 0; i < 4; ++i)
+                {
+                    auto c = juce::Rectangle<float> (r.getX() + r.getWidth() * (0.16f + 0.36f * (i % 2)), r.getY() + r.getHeight() * (0.16f + 0.36f * (i / 2)), r.getWidth() * 0.3f, r.getHeight() * 0.3f);
+                    if (i == 1) g.fillRoundedRectangle (c, 3.0f); else g.drawRoundedRectangle (c, 3.0f, 2.0f);
+                }
+                break;
+            case 7:   // podcast : un micro et des ondes
+            {
+                auto m = r.withSizeKeepingCentre (r.getWidth() * 0.24f, r.getHeight() * 0.44f).translated (0, -r.getHeight() * 0.06f);
+                g.fillRoundedRectangle (m, m.getWidth() * 0.5f);
+                for (float k : { 0.3f, 0.44f })
+                {
+                    p.addCentredArc (r.getCentreX(), m.getCentreY(), r.getWidth() * k, r.getHeight() * k, 0, -2.2f, -0.9f, true);
+                    p.addCentredArc (r.getCentreX(), m.getCentreY(), r.getWidth() * k, r.getHeight() * k, 0, 0.9f, 2.2f, true);
+                }
+                g.strokePath (p, juce::PathStrokeType (2.0f));
+                break;
+            }
             default:  // démonstration : une onde
                 for (int i = 0; i <= 40; ++i)
                 {
@@ -102,29 +131,30 @@ private:
 //==============================================================================
 HubPanel::HubPanel (MainComponent& m) : main (m)
 {
-    struct Def { int kind; const char* title; const char* desc; juce::uint32 colour; };
+    // kind : modèle (0 vide, 1 groupe, 2 beat, 3 voix et guitare, 4 podcast ; 9 mes modèles) ; glyph : icône.
+    struct Def { int kind, glyph; const char* title; const char* desc; juce::uint32 colour; };
     const Def defs[] = {
-        { 0, "Projet vide",            "Une piste audio et une piste instrument, 120 BPM.",                         0xff8b93a1 },
-        { 1, "Enregistrement",         "Voix, guitare, basse, batterie et une réverbération : prêt à enregistrer.", 0xffe8697a },
-        { 2, "Production",             "Batterie, basse, accords, nappe et lead prêts à jouer, une voix, une réverbération.", 0xff3fa4ff },
-        { 3, "Démonstration", "« Nuits du Nord » : 8 mesures avec batterie, basse, pad et synthé VST3.",   0xff2de2c6 },
-        { 4, "Mes modèles",            "", 0xffc58cff },
+        { 0, 0, "Projet vide",       "Aucune piste : choisissez par quoi commencer (instrument, batteur, voix, guitare…).", 0xff8b93a1 },
+        { 1, 5, "Groupe (rock, métal)", "Batterie qui joue, basse, deux guitares gauche / droite, voix : chaque piste sur son entrée.", 0xffe8697a },
+        { 2, 6, "Beat (hip-hop, électro)", "Batterie qui tourne, 808, accords, mélodie, voix rap, réverbération.", 0xff3fa4ff },
+        { 3, 1, "Voix et guitare",   "Chanter en jouant : guitare acoustique et voix enregistrées ensemble.", 0xff2de2c6 },
+        { 4, 7, "Podcast",           "Deux micros, niveau régulier prêt à publier, une piste pour la musique.", 0xfff2d34a },
+        { 9, 4, "Mes modèles",       "", 0xffc58cff },
     };
     for (auto& d : defs)
     {
         juce::String desc = U (d.desc);
-        if (d.kind == 4)
+        if (d.kind == 9)
         {
             const auto n = MainComponent::userTemplates().size();
             desc = n == 0 ? U ("Vos points de départ : Fichier › Enregistrer comme modèle…") : juce::String (n) + (n > 1 ? U (" modèles enregistrés") : U (" modèle enregistré")) + U (" : choisir…");
         }
-        auto* c = cards.add (new Card (d.kind, U (d.title), desc, juce::Colour (d.colour)));
+        auto* c = cards.add (new Card (d.glyph, U (d.title), desc, juce::Colour (d.colour)));
         const int kind = d.kind;
         c->onClick = [this, kind]
         {
-            if (kind == 4) { showTemplatesMenu(); return; }
-            if (kind == 3) { if (main.onOpenDemo) main.onOpenDemo(); }
-            else main.newProjectFromTemplate (kind);
+            if (kind == 9) { showTemplatesMenu(); return; }
+            if (kind == 0) main.newProject(); else main.newProjectFromTemplate (kind);
             closeHub();
         };
         addAndMakeVisible (c);
@@ -155,7 +185,7 @@ HubPanel::HubPanel (MainComponent& m) : main (m)
     startup.setColour (juce::ToggleButton::textColourId, theme::muted);
     startup.onClick = [this] { setShowAtStartup (startup.getToggleState()); };
     addAndMakeVisible (startup);
-    setSize (880, 600);
+    setSize (980, 600);
 }
 
 HubPanel::~HubPanel() { list.setModel (nullptr); }

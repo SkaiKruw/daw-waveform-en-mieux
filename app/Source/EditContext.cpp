@@ -347,8 +347,9 @@ void EditContext::routeInputsTo (te::AudioTrack* t)
             mi->setMonitorMode (mi->getDeviceID() == "all_midi_in" ? te::InputDevice::MonitorMode::on : te::InputDevice::MonitorMode::automatic);
         }
     edit->getTransport().ensureContextAllocated();
-    // Le clavier MIDI joue toujours la piste sélectionnée (si elle a un instrument), par l'entrée « toutes les
-    // entrées MIDI » seulement (sinon un clavier physique sonnerait deux fois).
+    // Le clavier MIDI joue la piste sélectionnée (si elle a un instrument) et les autres pistes instrument armées
+    // (plusieurs instruments joués et enregistrés ensemble), par l'entrée « toutes les entrées MIDI » seulement
+    // (sinon un clavier physique sonnerait deux fois).
     if (getInstrument (*t) != nullptr)
     {
         bool hasAllMidi = false;
@@ -362,8 +363,66 @@ void EditContext::routeInputsTo (te::AudioTrack* t)
                 for (auto id : instance->getTargets()) [[maybe_unused]] auto r = instance->removeTarget (id, nullptr);
                 continue;
             }
-            [[maybe_unused]] auto r = instance->setTarget (t->itemID, true, nullptr, 0);
+            for (auto id : instance->getTargets())
+                if (id != t->itemID && ! instance->isRecordingEnabled (id)) [[maybe_unused]] auto r = instance->removeTarget (id, nullptr);
+            if (! te::isOnTargetTrack (*instance, *t, 0)) [[maybe_unused]] auto r = instance->setTarget (t->itemID, false, nullptr, 0);
         }
+    }
+}
+
+juce::StringArray EditContext::audioInputNames() const
+{
+    juce::StringArray names;
+    auto& dm = engine.getDeviceManager();
+    for (int i = 0; i < dm.getNumWaveInDevices(); ++i)
+        if (auto* w = dm.getWaveInDevice (i))
+            if (! w->isTrackDevice()) names.add (w->getName());
+    return names;
+}
+
+juce::String EditContext::getTrackInput (const te::AudioTrack& t) const
+{
+    return t.state.getProperty ("ondeInput").toString();
+}
+
+void EditContext::setTrackInput (te::AudioTrack& t, const juce::String& name)
+{
+    const bool wasArmed = isTrackArmed (t);
+    if (wasArmed) setTrackArmed (t, false);
+    t.state.setProperty ("ondeInput", name, nullptr);       // réglage de matériel : hors historique
+    if (wasArmed) setTrackArmed (t, true);
+    changed();
+}
+
+void EditContext::useMonoInputs (bool mono)
+{
+    // Une entrée par prise de la carte son (micro sur 1, guitare sur 2…) : un micro n'est plus enregistré sur un
+    // seul côté d'une paire stéréo. setDeviceNumChannels recrée les entrées : on recommence jusqu'à stabilité.
+    auto& dm = engine.getDeviceManager();
+    for (int pass = 0; pass < 64; ++pass)
+    {
+        te::WaveInputDevice* toChange = nullptr;
+        for (int i = 0; i < dm.getNumWaveInDevices() && toChange == nullptr; ++i)
+            if (auto* w = dm.getWaveInDevice (i))
+                if (! w->isTrackDevice() && (w->getChannelSet().size() == 2) == mono) toChange = w;
+        if (toChange == nullptr) break;
+        dm.setDeviceNumChannels (*toChange, mono ? 1u : 2u);
+    }
+}
+
+void EditContext::armOnSeparateInputs()
+{
+    // Chaque piste audio d'enregistrement reçoit sa propre entrée, dans l'ordre (voix : entrée 1, guitare : entrée 2…).
+    if (edit == nullptr) return;
+    const auto names = audioInputNames();
+    if (names.isEmpty()) return;
+    int k = 0;
+    for (auto* t : te::getAudioTracks (*edit))
+    {
+        if (getInstrument (*t) != nullptr || getFxTracks().contains (t)) continue;
+        if (k >= names.size()) break;
+        t->state.setProperty ("ondeInput", names[k++], nullptr);
+        setTrackArmed (*t, true);
     }
 }
 
@@ -376,25 +435,62 @@ void EditContext::setTrackArmed (te::AudioTrack& t, bool arm)
     edit->getTransport().ensureContextAllocated();
 
     const bool wantsMidi = getInstrument (t) != nullptr;
-    // MIDI : une seule entrée, « toutes les entrées MIDI » (claviers physiques et clavier d'Onde réunis) ; deux
-    // entrées armées sur une piste donnent deux prises, dont une vide qui remplace l'autre.
-    bool hasAllMidi = false;
-    for (auto instance : edit->getAllInputDevices())
-        hasAllMidi = hasAllMidi || instance->getInputDevice().getDeviceID() == "all_midi_in";
+    if (wantsMidi)
+    {
+        // MIDI : une seule entrée par piste, « toutes les entrées MIDI » (claviers physiques et clavier d'Onde
+        // réunis) ; deux entrées armées sur une piste donnent deux prises, dont une vide qui remplace l'autre.
+        // Plusieurs pistes instrument peuvent être armées ensemble : le clavier les joue et les enregistre toutes.
+        bool hasAllMidi = false;
+        for (auto instance : edit->getAllInputDevices())
+            hasAllMidi = hasAllMidi || instance->getInputDevice().getDeviceID() == "all_midi_in";
+        for (auto instance : edit->getAllInputDevices())
+        {
+            if (instance->getInputDevice().getDeviceType() == te::InputDevice::waveDevice) continue;
+            if (hasAllMidi && instance->getInputDevice().getDeviceID() != "all_midi_in")
+            {
+                if (te::isOnTargetTrack (*instance, t, 0)) instance->setRecordingEnabled (t.itemID, false);
+                continue;
+            }
+            if (arm && ! te::isOnTargetTrack (*instance, t, 0))
+                [[maybe_unused]] auto r = instance->setTarget (t.itemID, false, nullptr, 0);
+            if (te::isOnTargetTrack (*instance, t, 0))
+                instance->setRecordingEnabled (t.itemID, arm);
+            break;
+        }
+        changed();
+        return;
+    }
+
+    // Audio : l'entrée choisie pour la piste ; sinon la première qui n'enregistre pas déjà sur une autre piste.
+    auto input = getTrackInput (t);
+    const auto names = audioInputNames();
+    if (arm && ! names.contains (input))
+    {
+        input = {};
+        for (auto instance : edit->getAllInputDevices())
+        {
+            if (instance->getInputDevice().getDeviceType() != te::InputDevice::waveDevice) continue;
+            bool busy = false;
+            for (auto id : instance->getTargets()) busy = busy || (id != t.itemID && instance->isRecordingEnabled (id));
+            if (! busy && names.contains (instance->getInputDevice().getName())) { input = instance->getInputDevice().getName(); break; }
+        }
+        if (input.isEmpty() && ! names.isEmpty()) input = names[0];
+        t.state.setProperty ("ondeInput", input, nullptr);
+    }
     for (auto instance : edit->getAllInputDevices())
     {
-        const bool isWave = instance->getInputDevice().getDeviceType() == te::InputDevice::waveDevice;
-        if (isWave == wantsMidi) continue;
-        if (wantsMidi && hasAllMidi && instance->getInputDevice().getDeviceID() != "all_midi_in")
+        if (instance->getInputDevice().getDeviceType() != te::InputDevice::waveDevice) continue;
+        const bool chosen = instance->getInputDevice().getName() == input;
+        if (arm && chosen)
         {
-            if (te::isOnTargetTrack (*instance, t, 0)) instance->setRecordingEnabled (t.itemID, false);
-            continue;
+            if (! te::isOnTargetTrack (*instance, t, 0)) [[maybe_unused]] auto r = instance->setTarget (t.itemID, false, nullptr, 0);
+            instance->setRecordingEnabled (t.itemID, true);
         }
-        if (arm && ! te::isOnTargetTrack (*instance, t, 0))
-            [[maybe_unused]] auto r = instance->setTarget (t.itemID, true, nullptr, 0);
-        if (te::isOnTargetTrack (*instance, t, 0))
-            instance->setRecordingEnabled (t.itemID, arm);
-        if (arm) break;                               // une seule entrée par piste
+        else if (te::isOnTargetTrack (*instance, t, 0))
+        {
+            instance->setRecordingEnabled (t.itemID, false);
+            if (! chosen) [[maybe_unused]] auto r = instance->removeTarget (t.itemID, nullptr);
+        }
     }
     changed();
 }

@@ -36,6 +36,7 @@ juce::Array<PluginEntry> PluginCatalog::getBuiltIns (bool instruments) const
         add ("Onde EQ (égaliseur paramétrique, analyseur)", ondefx::EqPlugin::xmlTypeName, false);       r.getReference (r.size() - 1).manufacturer = "Onde";
         add ("Onde Comp (compresseur)", ondefx::CompPlugin::xmlTypeName, false);                         r.getReference (r.size() - 1).manufacturer = "Onde";
         add ("Onde Limiteur (plafond garanti)", ondefx::LimiterPlugin::xmlTypeName, false);              r.getReference (r.size() - 1).manufacturer = "Onde";
+        add ("Onde Ampli (guitare, basse : clair, crunch, lead, moderne)", ondefx::AmpPlugin::xmlTypeName, false); r.getReference (r.size() - 1).manufacturer = "Onde";
         add ("Onde Saturation (douce, lampe, bande, fuzz)", ondefx::SaturationPlugin::xmlTypeName, false); r.getReference (r.size() - 1).manufacturer = "Onde";
         add ("Onde Écho (délai calé sur le tempo)", ondefx::EchoPlugin::xmlTypeName, false);              r.getReference (r.size() - 1).manufacturer = "Onde";
         add ("Onde Espace (réverbération)", ondefx::SpacePlugin::xmlTypeName, false);                    r.getReference (r.size() - 1).manufacturer = "Onde";

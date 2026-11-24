@@ -1763,12 +1763,15 @@ void ArrangementView::timerCallback()
     if (++frame % 6 == 0) { for (auto* r : rows) r->sync(); for (auto* f : folderRows) f->sync(); }
     for (auto* r : rows) r->updateMeter();
 
-    // Défilement automatique par pages pendant la lecture.
-    if (ctx.edit != nullptr && ctx.edit->getTransport().isPlaying())
+    // Défilement automatique par pages pendant la lecture, et quand le curseur saute hors de la vue (retour au
+    // début, repère, mesure suivante…) : la vue le suit.
+    if (ctx.edit != nullptr)
     {
         const double t = ctx.edit->getTransport().getPosition().inSeconds();
+        const bool jumped = std::abs (t - lastFollowPos) > 1.0e-3;
+        lastFollowPos = t;
         const double visible = (getWidth() - headerW) / pxPerSecond;
-        if (timeToX (t) > (float) getWidth() - 20 || t < viewStart) { viewStart = juce::jmax (0.0, t - visible * 0.05); updateScrollBar(); }
+        if ((ctx.edit->getTransport().isPlaying() || jumped) && (timeToX (t) > (float) getWidth() - 20 || t < viewStart)) { viewStart = juce::jmax (0.0, t - visible * 0.05); updateScrollBar(); }
     }
     if (frame % 15 == 0) updateScrollBar();
     watchEdit();

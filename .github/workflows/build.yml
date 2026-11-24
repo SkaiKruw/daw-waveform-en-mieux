@@ -1,0 +1,79 @@
+# Compilation d'Onde sur les machines de GitHub : Windows (installateur) et macOS (image disque).
+# Lancement : onglet « Actions » › « Compiler Onde » › « Run workflow », ou automatiquement en poussant une étiquette
+# de version (git tag v0.6 && git push --tags) : une version GitHub est alors publiée avec les fichiers, ce que
+# lit la vérification des mises à jour d'Onde (Aide › Rechercher des mises à jour).
+name: Compiler Onde
+
+on:
+  workflow_dispatch:
+  push:
+    tags: [ 'v*' ]
+
+env:
+  TRACKTION_COMMIT: a5e44996f5f08dfa6af5f5d02d900fb3cfa37422
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Dépendances (Tracktion Engine + JUCE)
+        shell: bash
+        run: |
+          git clone https://github.com/Tracktion/tracktion_engine.git deps/tracktion_engine
+          git -C deps/tracktion_engine checkout $TRACKTION_COMMIT
+          git -C deps/tracktion_engine submodule update --init --recursive --depth 1
+      - name: Configuration
+        run: cmake -S . -B build-windows -G "Visual Studio 17 2022" -A x64
+      - name: Compilation
+        run: cmake --build build-windows --config Release --parallel --target Onde onde-runtime onde-setup
+      - name: Installateur (sans les modèles du séparateur, téléchargeables à part)
+        shell: pwsh
+        run: ./windows/creer-installateur.ps1 -SansModeles
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Onde-Windows
+          path: build-windows/installateur/Onde-*
+
+  macos:
+    runs-on: macos-14
+    # Portage en cours : le cœur (processus isolés) a sa version POSIX, l'application n'a pas encore été compilée
+    # sur Mac. Un échec ici ne bloque pas la version Windows.
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+      - name: Dépendances (Tracktion Engine + JUCE)
+        run: |
+          git clone https://github.com/Tracktion/tracktion_engine.git deps/tracktion_engine
+          git -C deps/tracktion_engine checkout $TRACKTION_COMMIT
+          git -C deps/tracktion_engine submodule update --init --recursive --depth 1
+      - name: Configuration
+        run: cmake -S . -B build-macos -G Xcode -DCMAKE_OSX_ARCHITECTURES="arm64;x86_64" -DCMAKE_OSX_DEPLOYMENT_TARGET=11.0
+      - name: Compilation
+        run: cmake --build build-macos --config Release --parallel --target Onde onde-plugin-host
+      - name: Image disque (.dmg)
+        run: |
+          APP=$(find build-macos -name "Onde.app" -maxdepth 6 | head -1)
+          cp "$(find build-macos -name onde-plugin-host -type f -perm +111 | head -1)" "$APP/Contents/MacOS/" || true
+          mkdir -p dmg && cp -R "$APP" dmg/ && ln -s /Applications dmg/Applications
+          hdiutil create -volname "Onde" -srcfolder dmg -ov -format UDZO Onde-macOS.dmg
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Onde-macOS
+          path: Onde-macOS.dmg
+
+  publier:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [ windows ]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: fichiers
+      - name: Version GitHub
+        uses: softprops/action-gh-release@v2
+        with:
+          files: fichiers/**/*
+          generate_release_notes: true

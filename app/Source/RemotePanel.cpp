@@ -31,6 +31,10 @@ RemotePanel::RemotePanel (RemoteControl& r) : remote (r)
     hint.setFont (theme::ui (12.5f));
     hint.setJustificationType (juce::Justification::topLeft);
     for (auto* c : std::initializer_list<juce::Component*> { &enable, &address, &urlText, &hint }) addAndMakeVisible (*c);
+    newCode.setTooltip (U ("Change le code : les téléphones déjà appairés devront saisir le nouveau"));
+    newCode.setColour (juce::TextButton::buttonColourId, theme::panel2);
+    newCode.onClick = [this] { remote.renewCode(); shownUrl.clear(); refresh(); repaint(); };
+    addChildComponent (newCode);
     setSize (560, 400);
     refresh();
     startTimer (1000);
@@ -90,6 +94,8 @@ void RemotePanel::resized()
     body.removeFromLeft (18);
     address.setBounds (body.removeFromTop (28));
     body.removeFromTop (14);
+    newCode.setVisible (remote.isRunning());
+    newCode.setBounds (body.getRight() - 120, body.getY() + 22, 120, 26);
     body.removeFromTop (60);      // code d'appairage (dessiné)
     urlText.setBounds (body.removeFromTop (52));
     body.removeFromTop (12);

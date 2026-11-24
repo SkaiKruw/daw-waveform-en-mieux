@@ -13,6 +13,11 @@ namespace prefs
     juce::File projectsFolder();            // dossier proposé pour enregistrer et ouvrir
     float uiScale();                        // taille de l'interface (1 = 100 %)
     void applyUiScale();
+    bool monoInputs();                      // une entrée par prise de la carte son (sinon paires stéréo)
+    // Métronome : son (fabriqué par Onde), réglages par défaut des nouveaux projets.
+    juce::StringArray clickSoundNames();
+    void applyClickSound (te::Engine&);
+    void applyMetronomeDefaults (te::Edit&);
 }
 
 class SettingsPanel  : public juce::Component
@@ -26,6 +31,7 @@ public:
     void showTab (int);
     int currentTab() const { return tab; }
     static juce::StringArray tabNames();
+    static constexpr int metronomeTab = 5;
 
     class Page;
 private:

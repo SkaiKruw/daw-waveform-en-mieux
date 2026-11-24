@@ -156,7 +156,12 @@ namespace stems
         te::Track* previous = nullptr;
         for (auto& s : list())
         {
-            const auto f = outDir.getChildFile (juce::String (s.id) + ".wav");
+            // Nom unique par séparation (« drums - Mix(2).wav ») : une séparation refaite sur le même événement ne
+            // reprend jamais les fichiers (ou copies en cache) d'une séparation précédente de même nom et même taille.
+            auto f = outDir.getChildFile (juce::String (s.id) + ".wav");
+            const auto unique = outDir.getChildFile (juce::String (s.id) + " - " + outDir.getFileName() + ".wav");
+            if (f.existsAsFile() && ! unique.existsAsFile() && f.moveFileTo (unique)) f = unique;
+            else if (unique.existsAsFile()) f = unique;
             auto t = edit.insertNewAudioTrack (te::TrackInsertPoint (folder.get(), previous), nullptr);
             if (t == nullptr) continue;
             t->setName (U (s.label));

@@ -141,6 +141,9 @@ private:
     juce::TextButton muteBtn { "M" }, soloBtn { "S" }, armBtn { U ("●") }, monBtn { U ("◉") }, readBtn { "R" }, writeBtn { "W" }, autoBtn { U ("Automation") };
     juce::TextButton instrumentBtn;
     juce::ComboBox chainBox;                         // chaîne d'effets prête
+    juce::ComboBox inputBox;                         // entrée audio de la piste (prise de la carte son)
+    juce::StringArray shownInputs;
+    int inputY = -1;
     juce::OwnedArray<juce::Component> quickKnobs;    // commandes rapides (macros)
     int quickY = -1, ticks = 0;
     juce::Slider volume, pan;

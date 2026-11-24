@@ -7,7 +7,7 @@ namespace ondefx
 {
     namespace
     {
-        constexpr int maxVoices = 24, maxUnison = 7, maxPartials = 20, chunk = 16;
+        constexpr int maxVoices = 24, maxUnison = 7, maxPartials = 26, chunk = 16;
         constexpr double twoPi = juce::MathConstants<double>::twoPi;
 
         juce::String hzText (float v)  { return v >= 1000.0f ? juce::String (v / 1000.0f, 2) + " kHz" : juce::String (juce::roundToInt (v)) + " Hz"; }
@@ -210,14 +210,15 @@ namespace ondefx
     {
         // Modes de caisse (air, table, harmonique, brillance) : fréquence, sélectivité, niveau.
         struct Mode { float f, q, g; };
-        static const Mode modes[6][4] = {
+        static const Mode modes[7][4] = {
             { { 0, 1, 0 }, { 0, 1, 0 }, { 0, 1, 0 }, { 0, 1, 0 } },                               // électrique : pas de caisse
             { { 100, 12, 0.9f }, { 205, 10, 0.6f }, { 420, 6, 0.35f }, { 2700, 2, 0.12f } },      // folk
             { { 95, 12, 1.0f }, { 190, 10, 0.7f }, { 380, 6, 0.35f }, { 1800, 2, 0.1f } },         // classique
             { { 0, 1, 0 }, { 0, 1, 0 }, { 0, 1, 0 }, { 0, 1, 0 } },                               // basse électrique
             { { 150, 6, 0.4f }, { 300, 5, 0.3f }, { 600, 4, 0.2f }, { 1500, 2, 0.1f } },           // harpe
-            { { 260, 10, 0.7f }, { 520, 8, 0.5f }, { 1100, 4, 0.25f }, { 3000, 2, 0.1f } } };      // ukulélé
-        static const float dry[6] = { 1.0f, 0.75f, 0.7f, 1.0f, 0.85f, 0.75f };
+            { { 260, 10, 0.7f }, { 520, 8, 0.5f }, { 1100, 4, 0.25f }, { 3000, 2, 0.1f } },      // ukulélé
+            { { 95, 6, 0.45f }, { 220, 5, 0.35f }, { 520, 4, 0.25f }, { 1400, 2.5f, 0.15f } } };     // table d'harmonie du piano
+        static const float dry[7] = { 1.0f, 0.75f, 0.7f, 1.0f, 0.85f, 0.75f, 0.85f };
         bodyType = type; bodyDry = dry[type];
         for (int k = 0; k < 4; ++k)
         {
@@ -511,12 +512,13 @@ namespace ondefx
                         }
                         if (damped) v.damper *= damperCoef;
                         const float e = s * v.damper * velGain * (0.4f + 0.6f * v.velocity) * 0.6f;
-                        L[start + c0 + i] += e * gl * 1.41f;
-                        R[start + c0 + i] += e * gr * 1.41f;
+                        pluckL[(size_t) (c0 + i)] += e * gl * 1.41f;      // piano : passe par la table d'harmonie (comme la caisse des cordes pincées)
+                        pluckR[(size_t) (c0 + i)] += e * gr * 1.41f;
                     }
                     for (int p = 0; p < v.partials; ++p) { v.strings[p][0].normalise(); v.strings[p][1].normalise(); }
                     // Les partiels aigus s'éteignent les premiers : ceux devenus inaudibles ne sont plus calculés.
                     while (v.partials > 1 && v.fastEnv[v.partials - 1] + v.slowEnv[v.partials - 1] < 1.0e-5f) --v.partials;
+                    anyPluck = true;
                     if (v.damper < 1.0e-4f || (v.partials > 0 && v.slowEnv[0] < 1.0e-4f)) v.active = false;
                 }
                 else if (v.engine == 3)
@@ -662,7 +664,8 @@ namespace ondefx
         }
         if (anyPluck)
         {
-            const int type = juce::jlimit (0, 5, juce::roundToInt (value ("body")));
+            // Piano : table d'harmonie ; cordes pincées : caisse choisie.
+            const int type = juce::roundToInt (value ("engine")) == 2 ? 6 : juce::jlimit (0, 5, juce::roundToInt (value ("body")));
             if (type != bodyType) setupBody (type);
             float* io[2] = { pluckL.data(), pluckR.data() };
             float* dst[2] = { L + start, R + start };
@@ -756,6 +759,8 @@ namespace ondefx
         // Préréglages Onde : réglages d'origine, conçus pour sonner tout de suite.
         static const std::vector<SynthPreset> list = {
             { "Pianos", "Piano de concert",          { { "engine", 2 }, { "bright", 0.6f }, { "hard", 0.5f }, { "velsens", 0.85f }, { "width", 0.6f } } },
+            { "Pianos", "Piano à queue",            { { "engine", 2 }, { "bright", 0.72f }, { "hard", 0.55f }, { "velsens", 0.9f }, { "width", 0.85f } } },
+            { "Pianos", "Piano droit",              { { "engine", 2 }, { "bright", 0.45f }, { "hard", 0.5f }, { "velsens", 0.8f }, { "width", 0.45f } } },
             { "Pianos", "Piano doux",                { { "engine", 2 }, { "bright", 0.3f }, { "hard", 0.2f }, { "velsens", 0.7f }, { "width", 0.5f } } },
             { "Pianos", "Piano brillant",            { { "engine", 2 }, { "bright", 0.95f }, { "hard", 0.85f }, { "velsens", 0.8f }, { "width", 0.7f } } },
             { "Pianos", "Piano électrique",          { { "engine", 1 }, { "ratio", 1 }, { "index", 1.6f }, { "idecay", 1.2f }, { "bright", 0.5f }, { "a", 0.002f }, { "d", 3.0f }, { "s", 0.25f }, { "r", 0.35f }, { "width", 0.6f } } },

@@ -467,6 +467,10 @@ Inspector::Inspector (EditContext& c) : ctx (c)
     name.setTooltip (U ("Double-clic pour renommer la piste"));
     name.onTextChange = [this] { if (auto* t = track()) { ctx.edit->getUndoManager().beginNewTransaction ("Renommer"); t->setName (name.getText()); ctx.changed(); } };
 
+    addChildComponent (inputBox);
+    inputBox.setTooltip (U ("Entrée de la carte son enregistrée sur cette piste (micro sur 1, guitare sur 2…)"));
+    inputBox.setTextWhenNothingSelected (U ("automatique (première libre)"));
+    inputBox.onChange = [this] { if (auto* t = track()) if (inputBox.getSelectedId() > 0) ctx.setTrackInput (*t, shownInputs[inputBox.getSelectedId() - 1]); };
     styleStateButton (muteBtn, theme::mute); styleStateButton (soloBtn, theme::solo); styleStateButton (armBtn, theme::rec);
     styleStateButton (monBtn, theme::monitor); styleStateButton (readBtn, theme::readA); styleStateButton (writeBtn, theme::writeA);
     muteBtn.setTooltip ("Rendre muet"); soloBtn.setTooltip ("Solo"); armBtn.setTooltip ("Activer l'enregistrement"); monBtn.setTooltip ("Monitoring");
@@ -675,6 +679,19 @@ void Inspector::syncValues()
 {
     auto* t = track();
     if (t == nullptr) return;
+    if (inputBox.isVisible())
+    {
+        const auto names = ctx.audioInputNames();
+        if (names != shownInputs)
+        {
+            shownInputs = names;
+            inputBox.clear (juce::dontSendNotification);
+            for (int i = 0; i < names.size(); ++i) inputBox.addItem (names[i], i + 1);
+            if (names.isEmpty()) inputBox.setTextWhenNothingSelected (U ("aucune entrée (choisissez la carte son)"));
+        }
+        const int idx = shownInputs.indexOf (ctx.getTrackInput (*t));
+        if (! inputBox.isPopupActive() && inputBox.getSelectedId() != idx + 1) inputBox.setSelectedId (idx + 1, juce::dontSendNotification);
+    }
     muteBtn.setToggleState (t->isMuted (false), juce::dontSendNotification);
     soloBtn.setToggleState (t->isSolo (false), juce::dontSendNotification);
     armBtn.setToggleState (ctx.isTrackArmed (*t), juce::dontSendNotification);
@@ -729,6 +746,17 @@ void Inspector::resized()
 
     auto* t = track();
     const bool hasInst = t != nullptr && ctx.getInstrument (*t) != nullptr;
+    // Entrée audio (pistes audio) : quelle prise de la carte son est enregistrée sur cette piste.
+    const bool audioTrack = t != nullptr && ! hasInst && ! ctx.getFxTracks().contains (t);
+    inputBox.setVisible (audioTrack);
+    inputY = -1;
+    if (audioTrack)
+    {
+        auto ir = r.removeFromTop (24);
+        inputY = ir.getY();
+        inputBox.setBounds (ir.withTrimmedLeft (54));
+        r.removeFromTop (8);
+    }
     instrumentBtn.setVisible (hasInst);
     instrumentY = -1;
     if (hasInst)
@@ -808,6 +836,7 @@ void Inspector::paint (juce::Graphics& g)
         g.setFont (theme::ui (11.5f, true)); g.setColour (theme::text);
         g.drawText (title, r.withTrimmedLeft (20), juce::Justification::centredLeft);
     };
+    if (inputY >= 0) { g.setColour (theme::muted); g.setFont (theme::ui (11.5f, true)); g.drawText (U ("Entrée"), 8, inputY, 50, 24, juce::Justification::centredLeft); }
     if (instrumentY >= 0) section (instrumentY, "Instrument");
     if (quickY >= 0) section (quickY, U ("Commandes rapides"));
     section (faderY, U ("Voie — ") + t->getName());
@@ -1076,8 +1105,8 @@ TransportPanel::TransportPanel (EditContext& c) : ctx (c)
         b->onClick = [this, id] { ctx.perform (id); };
         addAndMakeVisible (b);
     }
-    clickBtn = std::make_unique<IconButton> (U ("Métronome  (C)"), icons::metronome(), theme::accent);
-    clickBtn->onClick = [this] { ctx.perform ("transport.click"); };
+    clickBtn = std::make_unique<IconButton> (U ("Métronome  (C) · clic droit : réglages"), icons::metronome(), theme::accent);
+    clickBtn->onClick = [this] { ctx.perform (juce::ModifierKeys::currentModifiers.isPopupMenu() ? "transport.clickSettings" : "transport.click"); };
     punchInBtn = std::make_unique<IconButton> (U ("Punch : n'enregistre qu'entre les délimiteurs gauche et droit"), icons::punch (true), theme::rec);
     punchInBtn->onClick = [this] { if (ctx.edit) ctx.edit->recordingPunchInOut = ! ctx.edit->recordingPunchInOut.get(); };
     addAndMakeVisible (*clickBtn); addAndMakeVisible (*punchInBtn);

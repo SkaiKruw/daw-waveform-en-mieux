@@ -81,6 +81,12 @@ public:
     juce::Array<te::Plugin*> getInserts (te::AudioTrack&) const;     // effets (sans l'instrument, le volume, le vumètre)
     void routeInputsTo (te::AudioTrack*);           // entrées MIDI + audio vers la piste sélectionnée
     void setTrackArmed (te::AudioTrack&, bool);
+    // Entrée audio de la piste (nom de l'entrée de la carte son ; vide : la première libre à l'armement).
+    juce::StringArray audioInputNames() const;
+    juce::String getTrackInput (const te::AudioTrack&) const;
+    void setTrackInput (te::AudioTrack&, const juce::String&);
+    void useMonoInputs (bool mono);                // une entrée par prise (sinon paires stéréo)
+    void armOnSeparateInputs();                    // chaque piste audio sur sa propre entrée, armée
     bool isTrackArmed (te::AudioTrack&) const;
     void setTrackMonitoring (te::AudioTrack&, bool);
     bool isTrackMonitoring (te::AudioTrack&) const;

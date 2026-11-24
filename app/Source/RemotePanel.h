@@ -21,6 +21,7 @@ private:
     juce::ComboBox address;
     juce::TextEditor urlText;
     juce::Label hint;
+    juce::TextButton newCode { U ("Nouveau code") };
     QrCode qr;
     juce::Rectangle<float> qrArea;
     juce::String shownUrl;

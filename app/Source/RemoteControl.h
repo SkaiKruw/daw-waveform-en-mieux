@@ -21,6 +21,7 @@ public:
     // Un téléphone a interrogé la télécommande (code valide) il y a moins de 3 s.
     bool phoneConnected() const               { return isRunning() && juce::Time::getMillisecondCounter() - lastClientMs.load() < 3000; }
     juce::String getCode() const              { return code; }
+    void renewCode();                            // nouveau code d'appairage (gardé ensuite d'une activation à l'autre)
 
     struct Address { juce::String url, label; };
     juce::Array<Address> getAddresses() const;   // une par interface réseau IPv4 (réseau local, Tailscale…)

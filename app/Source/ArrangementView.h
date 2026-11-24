@@ -74,7 +74,7 @@ private:
 
     friend class TrackRow;
     EditContext& ctx;
-    double viewStart = 0.0, pxPerSecond = 60.0;
+    double viewStart = 0.0, pxPerSecond = 60.0, lastFollowPos = -1.0;
     std::unique_ptr<RowsHolder> holder;
     juce::Viewport viewport;
     juce::ScrollBar hbar { false };

@@ -106,8 +106,8 @@
 <dialog id="codeDlg">
   <div class="code">
     <b>Code d'appairage</b>
-    <input id="codeInput" inputmode="numeric" maxlength="6" placeholder="000000">
-    <p>Affiché dans Onde : Studio › Télécommande (téléphone).</p>
+    <input id="codeInput" type="text" inputmode="numeric" pattern="[0-9]*" autocomplete="one-time-code" maxlength="7" placeholder="000000">
+    <p id="codeMsg">Affiché dans Onde : Studio › Télécommande (téléphone).</p>
     <p style="margin-top:14px"><button id="codeOk">Connecter</button></p>
   </div>
 </dialog>
@@ -169,20 +169,36 @@ let custom = JSON.parse(localStorage.getItem("onde.custom") || "null") || [
 const $ = id => document.getElementById(id);
 const buzz = () => { if (navigator.vibrate) navigator.vibrate(12); };
 
+// Pas de code valide : les échanges s'arrêtent jusqu'à la saisie (sinon des dizaines d'essais faux par seconde
+// feraient bloquer la télécommande, par exemple dans l'application installée sur l'écran d'accueil).
+let paused = !code;
 async function api(path, method = "GET") {
+  if (paused) throw new Error("pause");
   const r = await fetch(path + (path.includes("?") ? "&" : "?") + "k=" + encodeURIComponent(code), { method, cache: "no-store" });
-  if (r.status === 403) { askCode(); throw new Error("code"); }
+  if (r.status === 403) { paused = true; askCode(code ? "Code incorrect ou changé : saisissez le code affiché dans Onde." : ""); throw new Error("code"); }
+  if (r.status === 429) { paused = true; askCode("Trop d'essais : attendez 30 secondes puis réessayez."); throw new Error("429"); }
   if (!r.ok) throw new Error(r.status);
   return r.json();
 }
 const act = id => api("/api/action?id=" + encodeURIComponent(id), "POST").then(poll).catch(() => {});
 const trackOp = (i, op) => api("/api/track?i=" + i + "&op=" + op, "POST").then(poll).catch(() => {});
 
-function askCode() {
+function askCode(msg) {
+  $("codeMsg").textContent = msg || "Affiché dans Onde : Studio › Télécommande (téléphone).";
+  $("codeMsg").style.color = msg ? "#f5a524" : "";
   if ($("codeDlg").open) return;
   $("codeInput").value = ""; $("codeDlg").showModal(); $("codeInput").focus();
 }
-$("codeOk").onclick = () => { code = $("codeInput").value.trim(); localStorage.setItem("onde.code", code); $("codeDlg").close(); loadActions(); poll(); };
+async function submitCode() {
+  const typed = $("codeInput").value.replace(/[^0-9]/g, "");
+  if (typed.length !== 6) { askCode("Le code a 6 chiffres."); return; }
+  code = typed; paused = false;
+  $("codeMsg").textContent = "Connexion…"; $("codeMsg").style.color = "";
+  try { await api("/api/state"); localStorage.setItem("onde.code", code); $("codeDlg").close(); loadActions(); poll(); }
+  catch (e) { if (!paused) askCode("Onde ne répond pas : vérifiez le Wi-Fi et que la télécommande est activée."); }
+}
+$("codeOk").onclick = submitCode;
+$("codeInput").addEventListener("keydown", e => { if (e.key === "Enter") { e.preventDefault(); submitCode(); } });
 
 function keyButton(def, slot) {
   const b = document.createElement("button");
@@ -292,6 +308,7 @@ document.querySelectorAll("nav button").forEach(n => n.onclick = () => { buzz();
 
 render();
 if (!code) askCode(); else { loadActions(); poll(); }
+if (paused) askCode();
 let timer = setInterval(poll, 250);
 document.addEventListener("visibilitychange", () => { clearInterval(timer); if (!document.hidden) { poll(); timer = setInterval(poll, 250); } });
 setInterval(loadActions, 5000);   // états des commandes à cocher (calage, cycle…)

@@ -14,24 +14,52 @@ const std::vector<TabView::Tuning>& TabView::tunings()
 {
     // Cordes de la plus aiguë (en haut de la tablature) à la plus grave.
     static const std::vector<Tuning> list = {
-        { "Guitare standard (Mi La Ré Sol Si Mi)", { 64, 59, 55, 50, 45, 40 } },
-        { "Guitare drop D (Ré La Ré Sol Si Mi)",   { 64, 59, 55, 50, 45, 38 } },
-        { "Guitare open G (Ré Sol Ré Sol Si Ré)",  { 62, 59, 55, 50, 43, 38 } },
-        { "Guitare 7 cordes (Si Mi La Ré Sol Si Mi)", { 64, 59, 55, 50, 45, 40, 35 } },
-        { "Guitare 8 cordes (Fa# Si Mi La Ré Sol Si Mi)", { 64, 59, 55, 50, 45, 40, 35, 30 } },
-        { "Guitare 12 cordes (accord standard)", { 64, 59, 55, 50, 45, 40 } },
-        { "Basse 4 cordes (Mi La Ré Sol)",          { 43, 38, 33, 28 } },
-        { "Basse 5 cordes (Si Mi La Ré Sol)",       { 43, 38, 33, 28, 23 } },
-        { "Ukulélé (Sol Do Mi La)",                  { 69, 64, 60, 67 } },
+        { "Guitare standard (Mi La Ré Sol Si Mi)", { 64, 59, 55, 50, 45, 40 }, trebleOctave },
+        { "Guitare drop D (Ré La Ré Sol Si Mi)",   { 64, 59, 55, 50, 45, 38 }, trebleOctave },
+        { "Guitare open G (Ré Sol Ré Sol Si Ré)",  { 62, 59, 55, 50, 43, 38 }, trebleOctave },
+        { "Guitare 7 cordes (Si Mi La Ré Sol Si Mi)", { 64, 59, 55, 50, 45, 40, 35 }, trebleOctave },
+        { "Guitare 8 cordes (Fa# Si Mi La Ré Sol Si Mi)", { 64, 59, 55, 50, 45, 40, 35, 30 }, trebleOctave },
+        { "Guitare 12 cordes (accord standard)", { 64, 59, 55, 50, 45, 40 }, trebleOctave },
+        { "Basse 4 cordes (Mi La Ré Sol)",          { 43, 38, 33, 28 }, bassOctave },
+        { "Basse 5 cordes (Si Mi La Ré Sol)",       { 43, 38, 33, 28, 23 }, bassOctave },
+        { "Ukulélé (Sol Do Mi La)",                  { 69, 64, 60, 67 }, treble },
+        { "Guitare DADGAD (Ré La Ré Sol La Ré)",    { 62, 57, 55, 50, 45, 38 }, trebleOctave },
+        { "Guitare drop C (Do Sol Do Fa La Ré)",    { 62, 57, 53, 48, 43, 36 }, trebleOctave },
+        { "Basse 6 cordes (Si Mi La Ré Sol Do)",    { 48, 43, 38, 33, 28, 23 }, bassOctave },
+        { "Mandoline (Sol Ré La Mi)",               { 76, 69, 62, 55 }, treble },
+        { "Banjo 5 cordes (Sol Ré Sol Si Ré)",      { 62, 59, 55, 50, 67 }, trebleOctave },
+        { "Violon (Sol Ré La Mi)",                  { 76, 69, 62, 55 }, treble },
+        { "Alto (Do Sol Ré La)",                    { 69, 62, 55, 48 }, alto },
+        { "Violoncelle (Do Sol Ré La)",             { 57, 50, 43, 36 }, bass },
     };
     return list;
+}
+
+juce::String TabView::clefName (int c)
+{
+    const char* names[] = { "Clé de sol octaviée (guitare)", "Clé de sol", "Clé de fa octaviée (basse)", "Clé d'ut 3e ligne (alto)", "Clé de fa" };
+    return juce::String::fromUTF8 (names[juce::jlimit (0, (int) numClefs - 1, c)]);
+}
+
+int TabView::staffStep (int pitch, int c)
+{
+    // Hauteur écrite (guitare, basse : une octave au-dessus du son), puis degré diatonique (avec dièses).
+    const int written = pitch + ((c == trebleOctave || c == bassOctave) ? 12 : 0);
+    static const int letter[12] = { 0, 0, 1, 1, 2, 3, 3, 4, 4, 5, 5, 6 };
+    auto diatonic = [] (int m) { return (m / 12) * 7 + letter[((m % 12) + 12) % 12]; };
+    const int bottomLine = (c == trebleOctave || c == treble) ? 64 : c == alto ? 53 : 43;     // Mi 4, Fa 3, Sol 2
+    return diatonic (written) - diatonic (bottomLine);
 }
 
 TabView::TabView (EditContext& c) : ctx (c)
 {
     for (size_t i = 0; i < tunings().size(); ++i) tuningBox.addItem (juce::String::fromUTF8 (tunings()[i].name), (int) i + 1);
     tuningBox.setSelectedId (1, juce::dontSendNotification);
-    tuningBox.onChange = [this] { setTuning (tuningBox.getSelectedId() - 1); };
+    tuningName = juce::String::fromUTF8 (tunings()[0].name);
+    tuningBox.onChange = [this] { if (tuningBox.getSelectedId() > 0) setTuning (tuningBox.getSelectedId() - 1); };
+    tuneBtn.setTooltip (U ("Accordage libre : la note de chaque corde, le nombre de cordes, la clé de la portée"));
+    tuneBtn.onClick = [this] { showTuningEditor(); };
+
     gridBox.addItem ("Grille 1/4", 1); gridBox.addItem ("Grille 1/8", 2); gridBox.addItem ("Grille 1/16", 3);
     gridBox.setSelectedId (2, juce::dontSendNotification);
     gridBox.onChange = [this] { repaint(); };
@@ -39,7 +67,7 @@ TabView::TabView (EditContext& c) : ctx (c)
     autoBtn.onClick = [this] { autoFingering(); };
     copyBtn.setTooltip (U ("Copie la tablature en texte (pour la partager, l'imprimer, la coller dans un message)"));
     copyBtn.onClick = [this] { juce::SystemClipboard::copyTextToClipboard (asciiTab()); if (ctx.setStatus) ctx.setStatus (U ("Tablature copiée en texte")); };
-    for (auto* comp : std::initializer_list<juce::Component*> { &tuningBox, &gridBox, &autoBtn, &copyBtn })
+    for (auto* comp : std::initializer_list<juce::Component*> { &tuningBox, &tuneBtn, &gridBox, &autoBtn, &copyBtn })
     {
         comp->setWantsKeyboardFocus (false);
         addAndMakeVisible (comp);
@@ -56,9 +84,56 @@ te::MidiClip* TabView::clip() const { return ctx.edit != nullptr ? ctx.getSelect
 void TabView::setTuning (int index)
 {
     tuning = juce::jlimit (0, (int) tunings().size() - 1, index);
-    tuningBox.setSelectedId (tuning + 1, juce::dontSendNotification);
-    caretString = juce::jlimit (0, (int) tunings()[(size_t) tuning].strings.size() - 1, caretString);
+    const auto& t = tunings()[(size_t) tuning];
+    setCustomTuning (t.strings, t.clef, juce::String::fromUTF8 (t.name));
+}
+
+void TabView::setCustomTuning (std::vector<int> s, int c, const juce::String& name)
+{
+    if (s.empty()) return;
+    strings = std::move (s);
+    clef = juce::jlimit (0, (int) numClefs - 1, c);
+    tuningName = name;
+    if (tuningName.isEmpty())
+    {
+        juce::StringArray n;
+        for (auto it = strings.rbegin(); it != strings.rend(); ++it) n.add (juce::String::fromUTF8 (noteNames[*it % 12]));
+        tuningName = U ("Accordage personnalisé (") + n.joinIntoString (" ") + ")";
+    }
+    int id = 0;
+    for (size_t i = 0; i < tunings().size(); ++i) if (tunings()[i].strings == strings && tunings()[i].clef == clef) { id = (int) i + 1; break; }
+    if (id > 0) tuning = id - 1;
+    tuningBox.setSelectedId (id, juce::dontSendNotification);
+    if (id == 0) tuningBox.setText (tuningName, juce::dontSendNotification);
+    caretString = juce::jlimit (0, (int) strings.size() - 1, caretString);
+    saveTuningToTrack();
     repaint();
+}
+
+void TabView::saveTuningToTrack()
+{
+    // Accordage retenu par piste (réglage d'affichage : hors historique).
+    if (auto* mc = clip())
+        if (auto* t = mc->getTrack())
+        {
+            juce::StringArray n;
+            for (int p : strings) n.add (juce::String (p));
+            t->state.setProperty ("ondeTuning", tuningName + "|" + juce::String (clef) + "|" + n.joinIntoString (","), nullptr);
+            shownTrack = t->itemID;
+        }
+}
+
+void TabView::loadTuningFromTrack()
+{
+    auto* mc = clip();
+    auto* t = mc != nullptr ? mc->getTrack() : nullptr;
+    if (t == nullptr || t->itemID == shownTrack) return;
+    shownTrack = t->itemID;
+    const auto v = juce::StringArray::fromTokens (t->state.getProperty ("ondeTuning").toString(), "|", "");
+    if (v.size() != 3) return;
+    std::vector<int> s;
+    for (auto& p : juce::StringArray::fromTokens (v[2], ",", "")) s.push_back (p.getIntValue());
+    if (! s.empty()) setCustomTuning (s, v[1].getIntValue(), v[0]);
 }
 
 double TabView::grid() const
@@ -69,8 +144,8 @@ double TabView::grid() const
 
 juce::Rectangle<int> TabView::staff() const
 {
-    const int n = (int) tunings()[(size_t) tuning].strings.size();
-    auto area = getLocalBounds().withTrimmedTop (toolbarH + rulerH).withTrimmedLeft (gutterW);
+    const int n = (int) strings.size();
+    auto area = getLocalBounds().withTrimmedTop (toolbarH + rulerH + notationH).withTrimmedLeft (gutterW);
     return area.withHeight (juce::jmin (area.getHeight(), (n + 1) * stringGap));
 }
 
@@ -80,7 +155,6 @@ int TabView::stringY (int s) const        { return staff().getY() + stringGap / 
 
 std::pair<int, int> TabView::placeOf (const te::MidiNote& n) const
 {
-    const auto& strings = tunings()[(size_t) tuning].strings;
     const int pitch = n.getNoteNumber();
     const int stored = n.getColour() - 1;
     if (juce::isPositiveAndBelow (stored, (int) strings.size()))
@@ -121,7 +195,6 @@ void TabView::audition (int pitch)
 te::MidiNote* TabView::writeFret (int string, double beat, int fret)
 {
     auto* mc = clip();
-    const auto& strings = tunings()[(size_t) tuning].strings;
     if (mc == nullptr || ! juce::isPositiveAndBelow (string, (int) strings.size())) return nullptr;
     fret = juce::jlimit (0, 24, fret);
     auto* um = &ctx.edit->getUndoManager();
@@ -139,7 +212,6 @@ void TabView::autoFingering()
 {
     auto* mc = clip();
     if (mc == nullptr) return;
-    const auto& strings = tunings()[(size_t) tuning].strings;
     auto* um = &ctx.edit->getUndoManager();
     um->beginNewTransaction (U ("Doigté automatique"));
     // Accords (même départ) : cordes différentes ; chaque note au plus près de la position de la main.
@@ -180,7 +252,6 @@ juce::String TabView::asciiTab() const
 {
     auto* mc = clip();
     if (mc == nullptr) return {};
-    const auto& strings = tunings()[(size_t) tuning].strings;
     const double step = 0.25;                                   // une colonne par double croche
     const double lengthBeats = juce::jmax (4.0, ctx.toBeats (mc->getPosition().getEnd().inSeconds()) - ctx.toBeats (mc->getPosition().getStart().inSeconds()));
     const int columns = (int) std::ceil (lengthBeats / step);
@@ -192,7 +263,7 @@ juce::String TabView::asciiTab() const
         if (s >= 0 && juce::isPositiveAndBelow (col, columns)) cells[(size_t) s][(size_t) col] = juce::String (fret);
     }
     juce::String out;
-    out << juce::String::fromUTF8 (tunings()[(size_t) tuning].name) << "\n";
+    out << tuningName << "\n";
     for (size_t s = 0; s < strings.size(); ++s)
     {
         juce::String line = (s == 0 ? shortName (strings[s]).toLowerCase() : shortName (strings[s])).paddedRight (' ', 2) + "|";
@@ -208,6 +279,7 @@ juce::String TabView::asciiTab() const
 
 void TabView::timerCallback()
 {
+    loadTuningFromTrack();
     if (isShowing() && ctx.edit != nullptr && ctx.edit->getTransport().isPlaying()) repaint (staff().withX (staff().getX()));
 }
 
@@ -220,7 +292,6 @@ void TabView::paint (juce::Graphics& g)
     g.setColour (theme::dim); g.setFont (theme::ui (11.0f));
     g.drawText (U ("Clic sur une corde · chiffres = case · ↑↓ autre corde · ←→ avancer · Suppr effacer"),
                 copyBtn.getRight() + 12, 0, getWidth() - copyBtn.getRight() - 20, toolbarH, juce::Justification::centredLeft, true);
-    const auto& strings = tunings()[(size_t) tuning].strings;
     auto st = staff();
     // Règle (mesures).
     auto ruler = juce::Rectangle<int> (gutterW, toolbarH, getWidth() - gutterW, rulerH);
@@ -237,6 +308,7 @@ void TabView::paint (juce::Graphics& g)
     // Grille fine.
     for (double b = std::floor (viewBeat / grid()) * grid(); beatToX (b) < getWidth(); b += grid())
         if (beatToX (b) >= gutterW) { g.setColour (juce::Colour (0xff24272c)); g.drawVerticalLine ((int) beatToX (b), (float) st.getY() + 6, (float) st.getBottom() - 6); }
+    paintNotation (g, mc);
     // Cordes et noms.
     for (int s = 0; s < (int) strings.size(); ++s)
     {
@@ -286,6 +358,7 @@ void TabView::resized()
     auto t = getLocalBounds().removeFromTop (toolbarH).reduced (8, 5);
     t.removeFromLeft (170);
     tuningBox.setBounds (t.removeFromLeft (290)); t.removeFromLeft (6);
+    tuneBtn.setBounds (t.removeFromLeft (90)); t.removeFromLeft (6);
     gridBox.setBounds (t.removeFromLeft (110)); t.removeFromLeft (6);
     autoBtn.setBounds (t.removeFromLeft (110)); t.removeFromLeft (6);
     copyBtn.setBounds (t.removeFromLeft (130));
@@ -295,7 +368,6 @@ void TabView::mouseDown (const juce::MouseEvent& e)
 {
     grabKeyboardFocus();
     if (clip() == nullptr || e.y < staff().getY() || e.x < gutterW) return;
-    const auto& strings = tunings()[(size_t) tuning].strings;
     const int s = juce::jlimit (0, (int) strings.size() - 1, (e.y - staff().getY() - 6) / stringGap);
     const double b = juce::jmax (0.0, std::floor (xToBeat ((float) e.x) / grid() + 0.25) * grid());
     if (e.mods.isPopupMenu())
@@ -321,7 +393,6 @@ bool TabView::keyPressed (const juce::KeyPress& k)
 {
     auto* mc = clip();
     if (mc == nullptr) return false;
-    const auto& strings = tunings()[(size_t) tuning].strings;
     const auto c = k.getTextCharacter();
     if (c >= '0' && c <= '9' && ! k.getModifiers().isCommandDown())
     {
@@ -363,4 +434,137 @@ bool TabView::keyPressed (const juce::KeyPress& k)
         return true;
     }
     return false;
+}
+
+//==============================================================================
+// Portée : clé de l'instrument, notes à leur hauteur écrite (proportionnelles au temps), lignes supplémentaires.
+juce::Rectangle<int> TabView::notation() const
+{
+    return { gutterW, toolbarH + rulerH, getWidth() - gutterW, notationH };
+}
+
+void TabView::paintNotation (juce::Graphics& g, te::MidiClip* mc)
+{
+    const auto area = notation();
+    const float top = (float) area.getY() + 34.0f, bottom = top + 4.0f * lineGap;
+    auto yOf = [bottom] (int step) { return bottom - step * (lineGap * 0.5f); };
+    g.setColour (juce::Colour (0xff1e2024)); g.fillRect (0, area.getY(), getWidth(), area.getHeight());
+    g.setColour (juce::Colour (0xff9aa0a8).withAlpha (0.7f));
+    for (int l = 0; l < 5; ++l) g.fillRect ((float) gutterW - 50.0f, top + l * lineGap - 0.5f, (float) getWidth(), 1.0f);
+    // Clé (symboles musicaux de la police de Windows), avec le 8 des clés octaviées.
+    const juce::Font sym (juce::FontOptions ("Segoe UI Symbol", 52.0f, juce::Font::plain));
+    g.setColour (theme::text); g.setFont (sym);
+    if (clef == trebleOctave || clef == treble)
+        g.drawText (juce::String::fromUTF8 ("\xF0\x9D\x84\x9E"), juce::Rectangle<float> (gutterW - 46.0f, top - 22.0f, 34.0f, 84.0f), juce::Justification::centred, false);
+    else if (clef == alto)
+        g.drawText (juce::String::fromUTF8 ("\xF0\x9D\x84\xA1"), juce::Rectangle<float> (gutterW - 46.0f, top - 4.0f, 34.0f, 44.0f), juce::Justification::centred, false);
+    else
+        g.drawText (juce::String::fromUTF8 ("\xF0\x9D\x84\xA2"), juce::Rectangle<float> (gutterW - 46.0f, top - 6.0f, 34.0f, 44.0f), juce::Justification::centred, false);
+    if (clef == trebleOctave || clef == bassOctave)
+    {
+        g.setFont (theme::ui (10.0f, true));
+        g.drawText ("8", juce::Rectangle<float> (gutterW - 36.0f, clef == trebleOctave ? bottom + 16.0f : bottom + 2.0f, 14.0f, 12.0f), juce::Justification::centred);
+    }
+    g.setColour (theme::dim); g.setFont (theme::ui (10.0f));
+    g.drawText (clefName (clef), 8, area.getY() + 2, 260, 14, juce::Justification::centredLeft);
+    if (mc == nullptr) return;
+    // Barres de mesure.
+    const int bpb = ctx.edit != nullptr ? juce::jmax (1, ctx.edit->tempoSequence.getTimeSigAt (te::TimePosition()).numerator.get()) : 4;
+    g.setColour (juce::Colour (0xff9aa0a8).withAlpha (0.6f));
+    for (double b = std::floor (viewBeat / bpb) * bpb; beatToX (b) < getWidth(); b += bpb)
+        if (beatToX (b) > gutterW + 2) g.fillRect (beatToX (b) - 0.5f, top, 1.0f, bottom - top);
+    // Notes.
+    static const bool black[12] = { false, true, false, true, false, false, true, false, true, false, true, false };
+    for (auto* n : mc->getSequence().getNotes())
+    {
+        const float x = beatToX (n->getStartBeat().inBeats()) + 6.0f;
+        if (x < gutterW || x > getWidth()) continue;
+        const int pitch = n->getNoteNumber(), step = staffStep (pitch, clef);
+        const float y = yOf (step);
+        g.setColour (juce::Colour (0xff9aa0a8));
+        for (int l = -2; l >= step; l -= 2) g.fillRect (x - 8.0f, yOf (l) - 0.5f, 16.0f, 1.0f);
+        for (int l = 10; l <= step; l += 2) g.fillRect (x - 8.0f, yOf (l) - 0.5f, 16.0f, 1.0f);
+        const double len = n->getLengthBeats().inBeats();
+        g.setColour (n->getColour() > 0 ? theme::text : juce::Colour (0xffb8c6d4));
+        auto head = juce::Rectangle<float> (x - 5.5f, y - 3.8f, 11.0f, 7.6f);
+        if (len >= 2.0) g.drawEllipse (head.reduced (0.6f), 1.6f); else g.fillEllipse (head);
+        if (len < 4.0)
+        {
+            const bool up = step < 4;
+            const float sx = up ? head.getRight() - 0.8f : head.getX() + 0.2f;
+            g.fillRect (sx, up ? y - 3.5f * lineGap : y, 1.2f, 3.5f * lineGap);
+            if (len <= 0.5) g.drawLine (sx, up ? y - 3.5f * lineGap : y + 3.5f * lineGap, sx + 7.0f, up ? y - 2.3f * lineGap : y + 2.3f * lineGap, 1.6f);
+        }
+        if (black[pitch % 12])
+        {
+            g.setFont (theme::ui (13.0f, true));
+            g.drawText (juce::String::fromUTF8 ("\xE2\x99\xAF"), juce::Rectangle<float> (x - 19.0f, y - 8.0f, 12.0f, 16.0f), juce::Justification::centred);
+        }
+    }
+}
+
+//==============================================================================
+// Accordage libre : note de chaque corde, nombre de cordes, clé de la portée.
+namespace
+{
+    juce::String noteWithOctave (int p) { return juce::String::fromUTF8 (noteNames[p % 12]) + juce::String (p / 12 - 1); }
+
+    class TuningEditor  : public juce::Component
+    {
+    public:
+        explicit TuningEditor (TabView& v) : view (&v), strings (v.getStrings()), clef (v.getClef())
+        {
+            addBtn.onClick = [this] { if (strings.size() < 10) { strings.push_back (juce::jmax (16, strings.back() - 5)); apply(); rebuild(); } };
+            removeBtn.onClick = [this] { if (strings.size() > 1) { strings.pop_back(); apply(); rebuild(); } };
+            for (int c = 0; c < TabView::numClefs; ++c) clefBox.addItem (TabView::clefName (c), c + 1);
+            clefBox.setSelectedId (clef + 1, juce::dontSendNotification);
+            clefBox.onChange = [this] { clef = clefBox.getSelectedId() - 1; apply(); };
+            for (auto* c : std::initializer_list<juce::Component*> { &addBtn, &removeBtn, &clefBox }) addAndMakeVisible (c);
+            rebuild();
+        }
+        void paint (juce::Graphics& g) override
+        {
+            g.setColour (theme::text); g.setFont (theme::ui (13.0f, true));
+            g.drawText (U ("Accordage (corde la plus aiguë en haut)"), 12, 8, getWidth() - 24, 18, juce::Justification::centredLeft);
+            g.setColour (theme::muted); g.setFont (theme::ui (12.0f));
+            for (int i = 0; i < boxes.size(); ++i) g.drawText (U ("Corde ") + juce::String (i + 1), 12, boxes[i]->getY(), 70, 24, juce::Justification::centredLeft);
+        }
+        void resized() override
+        {
+            int y = 34;
+            for (auto* b : boxes) { b->setBounds (84, y, getWidth() - 96, 24); y += 28; }
+            y += 6;
+            addBtn.setBounds (12, y, (getWidth() - 30) / 2, 26);
+            removeBtn.setBounds (addBtn.getRight() + 6, y, (getWidth() - 30) / 2, 26);
+            clefBox.setBounds (12, y + 34, getWidth() - 24, 26);
+        }
+    private:
+        void rebuild()
+        {
+            boxes.clear();
+            for (size_t i = 0; i < strings.size(); ++i)
+            {
+                auto* b = boxes.add (new juce::ComboBox());
+                for (int p = 16; p <= 88; ++p) b->addItem (noteWithOctave (p), p);
+                b->setSelectedId (strings[i], juce::dontSendNotification);
+                b->onChange = [this, i, b] { strings[i] = b->getSelectedId(); apply(); };
+                addAndMakeVisible (b);
+            }
+            setSize (300, 34 + (int) strings.size() * 28 + 6 + 26 + 8 + 26 + 12);
+            resized();
+            repaint();
+        }
+        void apply() { if (view != nullptr) view->setCustomTuning (strings, clef); }
+        juce::Component::SafePointer<TabView> view;
+        std::vector<int> strings;
+        int clef;
+        juce::OwnedArray<juce::ComboBox> boxes;
+        juce::TextButton addBtn { U ("+ corde grave") }, removeBtn { U ("- corde") };
+        juce::ComboBox clefBox;
+    };
+}
+
+void TabView::showTuningEditor()
+{
+    juce::CallOutBox::launchAsynchronously (std::make_unique<TuningEditor> (*this), tuneBtn.getScreenBounds(), nullptr);
 }

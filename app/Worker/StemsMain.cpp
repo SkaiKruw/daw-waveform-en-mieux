@@ -224,7 +224,20 @@ static int run (int argc, const fs::path* argv)
     }
     if (argc < 4) { std::cerr << "usage : onde-stems <modèles> <entrée.wav> <sortie> [threads] [precis|rapide[:modèle]]\n"; return 2; }
     const fs::path modelDir = argv[1], input = argv[2], outDir = argv[3];
-    const int threads = std::max (1, argc > 4 ? std::atoi (argv[4].string().c_str()) : (int) std::thread::hardware_concurrency());
+    int threads = std::max (1, argc > 4 ? std::atoi (argv[4].string().c_str()) : (int) std::thread::hardware_concurrency());
+#ifdef _WIN32
+    // Mémoire : chaque calcul en parallèle occupe environ 1,3 Go. On n'en lance pas plus que la mémoire libre ne
+    // le permet (sinon « bad allocation » sur les PC à 8 ou 16 Go avec beaucoup de cœurs).
+    {
+        MEMORYSTATUSEX ms { sizeof (ms) };
+        if (GlobalMemoryStatusEx (&ms))
+        {
+            const double freeGb = (double) ms.ullAvailPhys / (1024.0 * 1024.0 * 1024.0);
+            const int byMemory = std::max (1, (int) ((freeGb - 1.0) / 1.3));
+            if (byMemory < threads) { threads = byMemory; say ("TRACE mémoire libre " + std::to_string (freeGb) + " Go : " + std::to_string (threads) + " calcul(s) en parallèle"); }
+        }
+    }
+#endif
     // Mode « rapide » : un seul des 4 modèles fournit les 4 sources (4 fois moins de calcul).
     const std::string mode = argc > 5 ? argv[5].string() : std::string ("precis");
     const bool fast = mode.rfind ("rapide", 0) == 0;
@@ -270,6 +283,11 @@ static int run (int argc, const fs::path* argv)
     std::atomic<int> next { 0 }, done { 0 };
     std::vector<double> partial (jobs.size(), 0.0);
     std::atomic<bool> failed { false };
+    // Manque de mémoire pendant un tronçon : il est refait plus tard avec moins de calculs en parallèle.
+    std::vector<int> retry;
+    std::atomic<int> active { threads };
+    std::atomic<bool> outOfMemory { false };
+    std::vector<int> attempts (jobs.size(), 0);
 
     auto report = [&]
     {
@@ -293,7 +311,9 @@ static int run (int argc, const fs::path* argv)
 #endif
         for (;;)
         {
-            const int j = next++;
+            int j = -1;
+            { std::lock_guard<std::mutex> l (accMutex); if (! retry.empty()) { j = retry.back(); retry.pop_back(); } }
+            if (j < 0) j = next++;
             if (j >= (int) jobs.size() || failed) return;
             const auto& job = jobs[(size_t) j];
             const Eigen::Index a = std::max<Eigen::Index> (0, job.start - overlap), b = std::min (total, job.end + overlap);
@@ -310,6 +330,16 @@ static int run (int argc, const fs::path* argv)
                             if (verbose && j == 0)
                                 say ("TRACE " + std::to_string (std::chrono::duration<double> (std::chrono::steady_clock::now() - t0).count()) + " " + msg);
                         });
+            }
+            catch (const std::bad_alloc&)
+            {
+                std::lock_guard<std::mutex> l (accMutex);
+                if (++attempts[(size_t) j] > 3) { failed = true; say ("ERROR mémoire insuffisante pour séparer ce morceau : fermez d'autres applications ou choisissez le mode Rapide"); return; }
+                retry.push_back (j);
+                partial[(size_t) j] = 0.0;
+                outOfMemory = true;
+                if (active > 1) { --active; say ("TRACE mémoire pleine : un calcul en parallèle de moins"); return; }
+                continue;      // dernier calcul en cours : il reprend seul le tronçon, la mémoire libérée par les autres
             }
             catch (const std::exception& e) { failed = true; say (std::string ("ERROR ") + e.what()); return; }
             // Poids : rampe sur le recouvrement (sauf aux bords du morceau), 1 au milieu.
@@ -337,6 +367,15 @@ static int run (int argc, const fs::path* argv)
     std::thread ticker ([&] { while (done < (int) jobs.size() && ! failed) { std::this_thread::sleep_for (std::chrono::milliseconds (1000)); if (done < (int) jobs.size()) report(); } });
     for (auto& t : pool) t.join();
     ticker.join();
+    // Tronçons laissés par un calcul arrêté faute de mémoire : refaits un par un.
+    while (! failed && ! retry.empty())
+    {
+        const int before = (int) retry.size();
+        active = 1;
+        std::thread single (worker);
+        single.join();
+        if ((int) retry.size() >= before) { failed = true; say ("ERROR mémoire insuffisante pour séparer ce morceau : fermez d'autres applications ou choisissez le mode Rapide"); }
+    }
     if (failed) return 1;
 
     say ("STAGE ecriture");

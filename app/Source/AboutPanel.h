@@ -1,4 +1,5 @@
-// Fenêtre « À propos d'Onde » : logo, nom, version, principes et crédits.
+// Fenêtre « À propos d'Onde » : logo, version, nouveautés de la version, mises à jour (vérifier, télécharger),
+// principes et crédits (bibliothèques et licences).
 #pragma once
 #include "Theme.h"
 
@@ -9,8 +10,13 @@ public:
     void paint (juce::Graphics&) override;
     void resized() override;
     static void show();
-    static constexpr const char* version = "0.5";
+    static constexpr const char* version = "0.6";
+    static juce::StringArray whatsNew();             // nouveautés de cette version
+    void checkNow();
 
 private:
-    juce::TextButton close { "Fermer" };
+    juce::TextButton close { "Fermer" }, checkBtn, downloadBtn;
+    juce::ToggleButton autoCheck;
+    juce::String updateText, updateUrl;
+    juce::Colour updateColour;
 };
