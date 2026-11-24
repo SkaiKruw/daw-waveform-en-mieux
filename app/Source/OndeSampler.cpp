@@ -1,5 +1,6 @@
 #include "OndeSampler.h"
 #include "Preferences.h"
+#include <set>
 
 //==============================================================================
 // Lecture des fichiers SFZ.
@@ -45,7 +46,7 @@ namespace sfz
         }
 
         // Texte complet : #include remplacés, #define appliqués.
-        juce::String preprocess (const juce::File& file, std::map<juce::String, juce::String>& defines, int depth = 0)
+        juce::String preprocess (const juce::File& file, std::map<juce::String, juce::String>& defines, const juce::File& root, int depth = 0)
         {
             if (depth > 16 || ! file.existsAsFile()) return {};
             juce::String result;
@@ -58,20 +59,28 @@ namespace sfz
                     defines[rest.upToFirstOccurrenceOf (" ", false, false).trim()] = rest.fromFirstOccurrenceOf (" ", false, false).trim();
                     continue;
                 }
-                if (trimmed.startsWith ("#include"))
+                // Variables $NOM : les plus longues d'abord ($VEL10 avant $VEL1), avec les valeurs du moment.
+                auto substitute = [&defines] (juce::String s)
                 {
-                    const auto name = trimmed.fromFirstOccurrenceOf ("\"", false, false).upToLastOccurrenceOf ("\"", false, false);
-                    result << preprocess (file.getParentDirectory().getChildFile (name.replaceCharacter ('\\', '/')), defines, depth + 1) << "\n";
-                    continue;
-                }
-                // Variables $NOM : les plus longues d'abord ($VEL10 avant $VEL1).
-                if (line.containsChar ('$'))
-                {
+                    if (! s.containsChar ('$')) return s;
                     std::vector<std::pair<juce::String, juce::String>> list (defines.begin(), defines.end());
                     std::sort (list.begin(), list.end(), [] (auto& a, auto& b) { return a.first.length() > b.first.length(); });
-                    for (auto& [k, v] : list) line = line.replace (k, v);
+                    for (auto& [k, v] : list) s = s.replace (k, v);
+                    return s;
+                };
+                // #include peut se trouver n'importe où sur la ligne (« <group> #include "vel.txt" lovel=1 … »).
+                while (line.contains ("#include"))
+                {
+                    result << substitute (line.upToFirstOccurrenceOf ("#include", false, false)) << "\n";
+                    const auto after = line.fromFirstOccurrenceOf ("#include", false, false);
+                    const auto name = after.fromFirstOccurrenceOf ("\"", false, false).upToFirstOccurrenceOf ("\"", false, false);
+                    // Chemins relatifs au dossier du fichier principal (règle SFZ), sinon au fichier qui inclut.
+                    auto inc = root.getChildFile (name.replaceCharacter ('\\', '/'));
+                    if (! inc.existsAsFile()) inc = file.getParentDirectory().getChildFile (name.replaceCharacter ('\\', '/'));
+                    result << preprocess (inc, defines, root, depth + 1) << "\n";
+                    line = after.fromFirstOccurrenceOf ("\"", false, false).fromFirstOccurrenceOf ("\"", false, false);
                 }
-                result << line << "\n";
+                result << substitute (line) << "\n";
             }
             return result;
         }
@@ -98,7 +107,7 @@ namespace sfz
         inst->name = file.getFileNameWithoutExtension();
         if (! file.existsAsFile()) { inst->error = juce::String::fromUTF8 ("fichier introuvable : ") + file.getFullPathName(); return inst; }
         std::map<juce::String, juce::String> defines;
-        const auto text = preprocess (file, defines);
+        const auto text = preprocess (file, defines, file.getParentDirectory());
 
         Opcodes control, global, master, group, region;
         enum class Level { none, control, global, master, group, region } level = Level::none;
@@ -124,24 +133,57 @@ namespace sfz
             r.lovel = (int) num (o, "lovel", 1); r.hivel = (int) num (o, "hivel", 127);
             r.transpose = (int) num (o, "transpose", 0);
             r.tune = num (o, "tune", 0) + num (o, "pitch", 0);
-            r.volume = num (o, "volume", 0) + num (o, "gain", 0);
+            // Réglages pilotés par contrôleur (« ampeg_sustain_oncc103=100 ») : évalués avec la valeur de départ du
+            // contrôleur (set_ccN), comme les bibliothèques le prévoient à l'ouverture.
+            auto withCc = [&] (const char* base, float def)
+            {
+                float v = num (o, base, def);
+                const juce::String prefix = juce::String (base) + "_oncc";
+                for (auto& [k, val] : o)
+                    if (k.startsWith (prefix) && k.substring (prefix.length()).containsOnly ("0123456789"))
+                        v += val.getFloatValue() * inst->ccDefaults[(size_t) juce::jlimit (0, 127, k.substring (prefix.length()).getIntValue())] / 127.0f;
+                return v;
+            };
+            r.volume = withCc ("volume", 0) + num (o, "gain", 0);
+            {
+                float amp = num (o, "amplitude", 100.0f) / 100.0f;
+                for (auto& [k, val] : o)
+                    if (k.startsWith ("amplitude_oncc") && k.substring (14).containsOnly ("0123456789"))
+                        amp *= val.getFloatValue() / 100.0f * inst->ccDefaults[(size_t) juce::jlimit (0, 127, k.substring (14).getIntValue())] / 127.0f;
+                r.volume += juce::Decibels::gainToDecibels (juce::jmax (0.0001f, amp));
+            }
             r.pan = num (o, "pan", 0);
             r.ampVeltrack = num (o, "amp_veltrack", 100);
             r.pitchKeytrack = num (o, "pitch_keytrack", 100);
             r.delay = juce::jmax (0.0f, num (o, "delay", 0));
             for (auto& [k, v] : o) if (k.startsWith ("amp_velcurve_")) r.velCurve.push_back ({ k.substring (13).getIntValue(), v.getFloatValue() });
             std::sort (r.velCurve.begin(), r.velCurve.end());
+            {
+                std::map<int, std::pair<float, float>> cc;
+                for (auto& [k, v] : o)
+                {
+                    if (k.startsWith ("locc") && k.substring (4).containsOnly ("0123456789")) cc[k.substring (4).getIntValue()].first = v.getFloatValue();
+                    if (k.startsWith ("hicc") && k.substring (4).containsOnly ("0123456789")) { auto& e = cc[k.substring (4).getIntValue()]; e.second = v.getFloatValue(); }
+                }
+                for (auto& [n, range] : cc)
+                {
+                    const bool hasHi = o.count ("hicc" + juce::String (n)) > 0;
+                    if (n >= 0 && n < 128) r.ccRanges.push_back ({ n, range.first, hasHi ? range.second : 127.0f });
+                }
+            }
             r.seqLength = juce::jmax (1, (int) num (o, "seq_length", 1));
             r.seqPosition = juce::jmax (1, (int) num (o, "seq_position", 1));
             r.lorand = num (o, "lorand", 0); r.hirand = num (o, "hirand", 1);
             r.group = (int) num (o, "group", 0); r.offBy = (int) num (o, "off_by", 0);
-            r.attack = juce::jmax (0.0005f, num (o, "ampeg_attack", 0.001f));
-            r.hold = num (o, "ampeg_hold", 0);
-            r.decay = num (o, "ampeg_decay", 0);
-            r.sustain = num (o, "ampeg_sustain", 100);
-            r.release = juce::jmax (0.005f, num (o, "ampeg_release", 0.05f));
+            r.attack = juce::jmax (0.0005f, withCc ("ampeg_attack", 0.001f));
+            r.hold = withCc ("ampeg_hold", 0);
+            r.decay = withCc ("ampeg_decay", 0);
+            r.sustain = juce::jlimit (0.0f, 100.0f, withCc ("ampeg_sustain", 100));
+            r.release = juce::jmax (0.005f, withCc ("ampeg_release", 0.05f));
+            r.pan = juce::jlimit (-100.0f, 100.0f, withCc ("pan", 0));
             const auto trigger = o.count ("trigger") ? o["trigger"].trim().toLowerCase() : juce::String ("attack");
             r.releaseTrigger = trigger == "release";
+            r.trigger = trigger == "first" ? 2 : trigger == "legato" ? 3 : r.releaseTrigger ? 1 : 0;
             const auto loopMode = o.count ("loop_mode") ? o["loop_mode"] : (o.count ("loopmode") ? o["loopmode"] : juce::String());
             r.oneShot = loopMode == "one_shot";
             r.loop = loopMode == "loop_continuous" || loopMode == "loop_sustain";
@@ -160,16 +202,21 @@ namespace sfz
         };
 
         // Découpage : en-têtes <x> et paires clé=valeur (une valeur peut contenir des espaces : « sample=Violin A4.wav »).
-        int i = 0;
-        const int len = text.length();
+        // Lecture octet par octet du texte UTF-8 (temps proportionnel à la taille, même pour des milliers de zones).
+        const std::string bytes = text.toStdString();
+        const auto sub = [&bytes] (size_t a, size_t b) { return juce::String::fromUTF8 (bytes.data() + a, (int) (b - a)); };
+        const auto isSpace = [] (char ch) { return ch == ' ' || ch == '\t' || ch == '\r' || ch == '\n'; };
+        const auto isWord = [] (char ch) { return (ch >= 'a' && ch <= 'z') || (ch >= 'A' && ch <= 'Z') || (ch >= '0' && ch <= '9') || ch == '_'; };
+        size_t i = 0;
+        const size_t len = bytes.size();
         while (i < len)
         {
-            const auto c = text[i];
+            const char c = bytes[i];
             if (c == '<')
             {
-                const int close = text.indexOfChar (i, '>');
-                if (close < 0) break;
-                const auto header = text.substring (i + 1, close).trim().toLowerCase();
+                const auto close = bytes.find ('>', i);
+                if (close == std::string::npos) break;
+                const auto header = sub (i + 1, close).trim().toLowerCase();
                 flushRegion();
                 if (header == "control") { level = Level::control; control.clear(); }
                 else if (header == "global") { level = Level::global; global.clear(); master.clear(); group.clear(); }
@@ -180,30 +227,48 @@ namespace sfz
                 i = close + 1;
                 continue;
             }
-            if (juce::CharacterFunctions::isWhitespace (c)) { ++i; continue; }
-            const int eq = text.indexOfChar (i, '=');
-            if (eq < 0) break;
-            const auto name = text.substring (i, eq).trim();
-            // Fin de la valeur : avant le prochain « mot= » ou « < ».
-            int j = eq + 1, valueEnd = len;
+            if (isSpace (c)) { ++i; continue; }
+            // Nom de l'opcode : jusqu'au « = » (un mot isolé sans « = » est ignoré).
+            size_t eq = i;
+            while (eq < len && bytes[eq] != '=' && ! isSpace (bytes[eq]) && bytes[eq] != '<') ++eq;
+            if (eq >= len || bytes[eq] != '=') { i = eq; continue; }
+            const auto name = sub (i, eq).trim();
+            // Fin de la valeur : avant le prochain « mot= », un « < » ou la fin de ligne.
+            size_t j = eq + 1, valueEnd = len;
             while (j < len)
             {
-                if (text[j] == '<') { valueEnd = j; break; }
-                if (text[j] == '\n' || text[j] == '\r') { valueEnd = j; break; }
-                if (juce::CharacterFunctions::isWhitespace (text[j]))
+                const char ch = bytes[j];
+                if (ch == '<' || ch == '\n' || ch == '\r') { valueEnd = j; break; }
+                if (ch == ' ' || ch == '\t')
                 {
-                    int k = j; while (k < len && juce::CharacterFunctions::isWhitespace (text[k]) && text[k] != '\n') ++k;
-                    int m = k; while (m < len && (juce::CharacterFunctions::isLetterOrDigit (text[m]) || text[m] == '_')) ++m;
-                    if (m > k && m < len && text[m] == '=') { valueEnd = j; break; }
+                    size_t k = j; while (k < len && (bytes[k] == ' ' || bytes[k] == '\t')) ++k;
+                    size_t m = k; while (m < len && isWord (bytes[m])) ++m;
+                    if (m > k && m < len && bytes[m] == '=') { valueEnd = j; break; }
+                    j = k;
+                    continue;
                 }
                 ++j;
             }
-            const auto value = text.substring (eq + 1, valueEnd).trim();
+            const auto value = sub (eq + 1, valueEnd).trim();
             Opcodes* target = level == Level::control ? &control : level == Level::global ? &global : level == Level::master ? &master
                             : level == Level::group ? &group : level == Level::region ? &region : nullptr;
             if (target != nullptr) (*target)[name.toLowerCase()] = value;
-            if (level == Level::control && name == "default_path") defaultPath = file.getParentDirectory().getChildFile (value.replaceCharacter ('\\', '/'));
+            if (level == Level::control && name == "default_path")
+            {
+                // Variable non définie (« $sample_dir ») : retirée ; les échantillons manquants sont cherchés dans la bibliothèque.
+                auto p = value.replaceCharacter ('\\', '/');
+                while (p.containsChar ('$'))
+                {
+                    const int a = p.indexOfChar ('$');
+                    int b = a + 1;
+                    while (b < p.length() && (juce::CharacterFunctions::isLetterOrDigit (p[b]) || p[b] == '_')) ++b;
+                    p = p.substring (0, a) + p.substring (b);
+                }
+                defaultPath = file.getParentDirectory().getChildFile (p.trimCharactersAtStart ("/"));
+            }
             if (level == Level::control && name == "note_offset") noteOffset = value.getIntValue();
+            if (level == Level::control && name.startsWith ("set_hdcc")) { const int n = name.substring (8).getIntValue(); if (n >= 0 && n < 128) inst->ccDefaults[(size_t) n] = value.getFloatValue() * 127.0f; }
+            if (level == Level::control && name.startsWith ("set_cc")) { const int n = name.substring (6).getIntValue(); if (n >= 0 && n < 128) inst->ccDefaults[(size_t) n] = value.getFloatValue(); }
             i = valueEnd;
         }
         flushRegion();
@@ -220,9 +285,37 @@ namespace sfz
         fm.registerBasicFormats();
         std::map<juce::String, std::shared_ptr<Sample>> cache;
         int missing = 0;
+        // Échantillon introuvable au chemin indiqué (variable non définie, dossier déplacé…) : cherché par son nom dans
+        // la bibliothèque, en préférant le même sous-dossier (« acoustic/db2_vl1_rr1_1.wav »).
+        std::map<juce::String, juce::Array<juce::File>> index;
+        bool indexed = false;
+        std::map<juce::String, juce::File> resolved;
+        auto locate = [&] (const juce::File& wanted) -> juce::File
+        {
+            const auto key = wanted.getFullPathName();
+            if (auto it = resolved.find (key); it != resolved.end()) return it->second;
+            if (! indexed)
+            {
+                indexed = true;
+                const auto root = inst.file.getParentDirectory().getParentDirectory();
+                for (const auto& e : juce::RangedDirectoryIterator (root, true, "*.wav;*.flac;*.ogg;*.aif;*.aiff", juce::File::findFiles))
+                    index[e.getFile().getFileName().toLowerCase()].add (e.getFile());
+            }
+            juce::File found;
+            if (auto it = index.find (wanted.getFileName().toLowerCase()); it != index.end())
+            {
+                const auto tail = (wanted.getParentDirectory().getFileName() + "/" + wanted.getFileName()).toLowerCase();
+                found = it->second.getFirst();
+                for (auto& f : it->second)
+                    if (f.getFullPathName().replaceCharacter ('\\', '/').toLowerCase().endsWith (tail)) { found = f; break; }
+            }
+            resolved[key] = found;
+            return found;
+        };
         for (auto& r : inst.regions)
         {
             if (shouldStop && shouldStop()) return;
+            if (! r.sample.existsAsFile()) if (auto f = locate (r.sample); f.existsAsFile()) r.sample = f;
             const auto path = r.sample.getFullPathName();
             if (cache.count (path)) continue;
             auto s = std::make_shared<Sample>();
@@ -268,6 +361,28 @@ namespace ondefx
         if (root.isDirectory())
             for (const auto& e : juce::RangedDirectoryIterator (root, true, "*.sfz", juce::File::findFiles))
                 list.add (e.getFile());
+        // Les fichiers inclus par d'autres (cartes de notes, réglages communs) ne sont pas des instruments à part.
+        std::set<juce::String> included;
+        for (auto& f : list)
+        {
+            const auto text = f.loadFileAsString();
+            for (int at = text.indexOf ("#include"); at >= 0; at = text.indexOf (at + 8, "#include"))
+            {
+                const auto name = text.substring (at + 8).fromFirstOccurrenceOf ("\"", false, false).upToFirstOccurrenceOf ("\"", false, false).replaceCharacter ('\\', '/');
+                if (name.isEmpty()) continue;
+                for (auto dir = f.getParentDirectory(); dir.isAChildOf (root) || dir == root; dir = dir.getParentDirectory())   // chemin relatif au fichier principal
+                {
+                    included.insert (dir.getChildFile (name).getFullPathName().toLowerCase());
+                    if (dir == root) break;
+                }
+            }
+        }
+        list.removeIf ([&included] (const juce::File& f) { return included.count (f.getFullPathName().toLowerCase()) > 0; });
+        // Bibliothèque avec des programmes principaux (section <control>) : seuls ceux-là sont proposés ; les autres
+        // fichiers sont des morceaux (cartes de notes, couches) qu'ils assemblent.
+        juce::Array<juce::File> programs;
+        for (auto& f : list) if (f.loadFileAsString().containsIgnoreCase ("<control>")) programs.add (f);
+        if (! programs.isEmpty()) list = programs;
         std::sort (list.begin(), list.end(), [] (const juce::File& a, const juce::File& b) { return a.getFullPathName().compareNatural (b.getFullPathName()) < 0; });
         return list;
     }
@@ -438,6 +553,9 @@ namespace ondefx
         bool isSwitch = (inst->swLo >= 0 && note >= inst->swLo && note <= inst->swHi) || inst->keyswitchNames[(size_t) note].isNotEmpty();
         if (! isSwitch) for (auto& r : inst->regions) if (r.swLast == note) { isSwitch = true; break; }
         if (isSwitch) { currentSwitch = note; return; }
+        if (inst.get() != ccSource) { ccValues = inst->ccDefaults; ccSource = inst.get(); }   // contrôleurs de départ de l'instrument
+        int othersHeld = 0;
+        for (int k = 0; k < 128; ++k) if (k != note && noteHeld[(size_t) k]) ++othersHeld;
         noteVelocity[(size_t) note] = velocity;
         noteHeld[(size_t) note] = true;
         const int counter = ++seqCounter[(size_t) note];
@@ -448,6 +566,10 @@ namespace ondefx
         {
             if (r.releaseTrigger || note < r.lokey || note > r.hikey || velocity < r.lovel || velocity > r.hivel) continue;
             if (r.swLast >= 0 && r.swLast != sw) continue;
+            if ((r.trigger == 2 && othersHeld > 0) || (r.trigger == 3 && othersHeld == 0)) continue;   // première note / note liée
+            bool ccOk = true;
+            for (auto& [cc, lo, hi] : r.ccRanges) if (ccValues[(size_t) cc] < lo || ccValues[(size_t) cc] > hi) { ccOk = false; break; }
+            if (! ccOk) continue;
             if (r.seqLength > 1 && ((counter - 1) % r.seqLength) + 1 != r.seqPosition) continue;
             if (rnd < r.lorand || rnd >= r.hirand) continue;
             startRegion (r, note, velocity, 1.0f);
@@ -548,6 +670,7 @@ namespace ondefx
                     for (auto& v : voices) if (v->active && ! v->held && ! v->releasing && ! v->region->oneShot) { v->releasing = true; v->stage = 4; }
                 }
                 else if (msg.isPitchWheel()) pitchBend = (msg.getPitchWheelValue() - 8192) / 8192.0f;
+                else if (msg.isController()) ccValues[(size_t) msg.getControllerNumber()] = (float) msg.getControllerValue();
                 else if (msg.isAllNotesOff() || msg.isAllSoundOff()) for (auto& v : voices) v->active = false;
             }
         }

@@ -17,10 +17,12 @@ namespace sfz
         float volume = 0.0f, tune = 0.0f, pan = 0.0f, ampVeltrack = 100.0f;
         float attack = 0.001f, decay = 0.0f, sustain = 100.0f, release = 0.05f, hold = 0.0f;
         bool releaseTrigger = false, oneShot = false, loop = false;
+        int trigger = 0;                                  // 0 attaque, 1 relâchement, 2 première note (first), 3 note liée (legato)
         juce::int64 offset = 0, end = -1, loopStart = 0, loopEnd = -1;
         float pitchKeytrack = 100.0f;
         float delay = 0.0f;                               // départ retardé (accords grattés, bruits)
         std::vector<std::pair<int, float>> velCurve;      // amp_velcurve_N : niveau selon la vélocité
+        std::vector<std::tuple<int, float, float>> ccRanges;   // loccN / hiccN : joue seulement si le contrôleur N est dans la plage
     };
 
     struct Sample { juce::AudioBuffer<float> data; double rate = 44100.0; };
@@ -34,6 +36,7 @@ namespace sfz
         int swDefault = -1, swLo = -1, swHi = -1;                   // touches de commutation (articulations)
         juce::StringArray articulations;                            // noms des articulations (sw_label), par touche
         std::array<juce::String, 128> keyswitchNames;
+        std::array<float, 128> ccDefaults {};                     // set_ccN : valeurs de départ des contrôleurs
         juce::String error;
         bool hasNote (int note) const;
     };
@@ -104,6 +107,8 @@ namespace ondefx
         float pitchBend = 0.0f, lpState[2] {};
         juce::uint32 voiceCounter = 0;
         juce::uint32 currentEvent = 0;
+        std::array<float, 128> ccValues {};
+        const sfz::Instrument* ccSource = nullptr;
         juce::Random random;
         juce::AbstractFifo auditionFifo { 64 };
         std::array<std::pair<int, float>, 64> auditionQueue {};

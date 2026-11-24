@@ -26,6 +26,8 @@ namespace libraries
     // shouldStop : annulation. Appelé hors du fil de l'interface.
     juce::Result downloadAndInstall (const Info&, std::function<void (int stage, float fraction, juce::int64 bytes)> progress, std::function<bool()> shouldStop = nullptr);
     const Info* find (const juce::String& id);
+    // Crée des instruments SFZ à partir d'échantillons nommés (note, vélocité, variation) ; renvoie leur nombre.
+    int buildInstrumentsFromSamples (const juce::File& samplesRoot, const juce::File& outDir, std::function<void (float)> progress);
 }
 
 class LibrariesPanel  : public juce::Component, private juce::Timer

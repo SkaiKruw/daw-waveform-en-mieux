@@ -170,6 +170,11 @@ namespace
         auto edit = te::Edit::createSingleTrackEdit (engine);
         for (auto* info : todo)
         {
+            if (! libraries::isInstalled (*info) && libraries::folderFor (*info).isDirectory())
+            {
+                const int made = libraries::buildInstrumentsFromSamples (libraries::folderFor (*info), libraries::folderFor (*info).getChildFile ("Instruments Onde"), nullptr);
+                std::printf ("  info   : %s : %d instruments créés à partir des échantillons\n", info->id, made);
+            }
             if (! libraries::isInstalled (*info))
             {
                 if (args.contains ("--sans-telecharger")) { std::printf ("  info   : %s non installée\n", info->id); continue; }

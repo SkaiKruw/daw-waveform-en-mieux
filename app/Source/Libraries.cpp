@@ -2,6 +2,7 @@
 #include "OndeSampler.h"
 #include "Preferences.h"
 #include "ParamControls.h"
+#include <set>
 
 namespace libraries
 {
@@ -29,6 +30,151 @@ namespace libraries
     bool isInstalled (const Info& i)     { return ! ondefx::findInstruments (folderFor (i)).isEmpty(); }
     juce::String downloadUrl (const Info& i) { return "https://github.com/" + juce::String (i.repository) + "/archive/HEAD.zip"; }
 
+
+    //==========================================================================
+    // Instruments créés automatiquement depuis un dossier d'échantillons nommés (« spic_A2_v1_RR1.wav ») :
+    // note, couche de vélocité (v1, v2… ou p, mf, f…), variation (rr1, rr2…) ; l'octave est vérifiée en mesurant
+    // la hauteur réelle d'un échantillon (les bibliothèques ne numérotent pas toutes les octaves de la même façon).
+    namespace
+    {
+        struct Parsed { juce::File file; int note = -1; int layer = 0; int rr = 1; juce::String prefix; };
+
+        int dynamicRank (const juce::String& t)
+        {
+            static const char* order[] = { "ppp", "pp", "p", "mp", "mf", "f", "ff", "fff" };
+            for (int i = 0; i < 8; ++i) if (t == order[i]) return i + 1;
+            return 0;
+        }
+
+        Parsed parseName (const juce::File& f)
+        {
+            Parsed p; p.file = f;
+            const auto tokens = juce::StringArray::fromTokens (f.getFileNameWithoutExtension(), "_ -.", "");
+            juce::StringArray prefix;
+            for (auto& raw : tokens)
+            {
+                const auto t = raw.toLowerCase();
+                if (p.note < 0 && t.length() >= 2 && t.length() <= 4 && juce::String ("abcdefg").containsChar (t[0]))
+                {
+                    int i = 1, n = juce::String ("c d ef g a b").indexOfChar (t[0]);
+                    if (t[i] == '#' || t[i] == 's') { ++n; ++i; } else if (t[i] == 'b' && t.length() > 2) { --n; ++i; }
+                    const auto oct = t.substring (i);
+                    if (oct.isNotEmpty() && oct.containsOnly ("-0123456789")) { p.note = (oct.getIntValue() + 1) * 12 + n; continue; }
+                }
+                if (t.startsWith ("rr") && t.substring (2).containsOnly ("0123456789") && t.length() > 2) { p.rr = juce::jmax (1, t.substring (2).getIntValue()); continue; }
+                if ((t.startsWith ("v") || t.startsWith ("vl")) && t.trimCharactersAtStart ("vl").containsOnly ("0123456789") && t.length() > 1) { p.layer = t.trimCharactersAtStart ("vl").getIntValue(); continue; }
+                if (const int d = dynamicRank (t); d > 0) { p.layer = d; continue; }
+                if (p.note < 0) prefix.add (raw);
+            }
+            p.prefix = prefix.joinIntoString (" ");
+            return p;
+        }
+
+        // Fréquence fondamentale par autocorrélation (0,2 s à 0,6 s du début).
+        double measurePitch (const juce::File& f)
+        {
+            juce::AudioFormatManager fm; fm.registerBasicFormats();
+            std::unique_ptr<juce::AudioFormatReader> r (fm.createReaderFor (f));
+            if (r == nullptr) return 0;
+            const int start = (int) (r->sampleRate * 0.15), len = (int) juce::jmin<juce::int64> ((juce::int64) (r->sampleRate * 0.4), r->lengthInSamples - start);
+            if (len < 2048) return 0;
+            juce::AudioBuffer<float> b (1, len);
+            r->read (&b, 0, len, start, true, false);
+            const float* x = b.getReadPointer (0);
+            const int minLag = (int) (r->sampleRate / 2000.0), maxLag = juce::jmin (len / 2, (int) (r->sampleRate / 25.0));
+            double energy = 0; for (int i = 0; i < len - maxLag; ++i) energy += x[i] * x[i];
+            if (energy <= 1.0e-9) return 0;
+            std::vector<double> nsdf ((size_t) maxLag + 1, 0.0);
+            for (int lag = minLag; lag <= maxLag; ++lag)
+            {
+                double acf = 0, m = 0;
+                for (int i = 0; i < len - maxLag; ++i) { acf += x[i] * x[i + lag]; m += x[i] * x[i] + x[i + lag] * x[i + lag]; }
+                nsdf[(size_t) lag] = m > 0 ? 2.0 * acf / m : 0.0;
+            }
+            // Premier maximum important (évite les sous-octaves).
+            double best = 0; int bestLag = 0;
+            for (int lag = minLag + 1; lag < maxLag; ++lag) best = std::max (best, nsdf[(size_t) lag]);
+            for (int lag = minLag + 1; lag < maxLag; ++lag)
+                if (nsdf[(size_t) lag] > 0.9 * best && nsdf[(size_t) lag] >= nsdf[(size_t) lag - 1] && nsdf[(size_t) lag] >= nsdf[(size_t) lag + 1]) { bestLag = lag; break; }
+            return bestLag > 0 && best > 0.5 ? r->sampleRate / bestLag : 0.0;
+        }
+    }
+
+    int buildInstrumentsFromSamples (const juce::File& root, const juce::File& outDir, std::function<void (float)> progress)
+    {
+        // Échantillons regroupés par dossier et par préfixe (articulation).
+        std::map<juce::String, std::vector<Parsed>> groups;
+        std::map<juce::String, juce::String> names;
+        juce::Array<juce::File> wavs;
+        for (const auto& e : juce::RangedDirectoryIterator (root, true, "*.wav;*.flac;*.ogg;*.aif;*.aiff", juce::File::findFiles)) wavs.add (e.getFile());
+        for (auto& f : wavs)
+        {
+            auto p = parseName (f);
+            if (p.note < 0) continue;
+            const auto key = f.getParentDirectory().getFullPathName() + "|" + p.prefix.toLowerCase();
+            groups[key].push_back (p);
+            auto rel = f.getParentDirectory().getRelativePathFrom (root).replaceCharacter ('\\', '/');
+            auto parts = juce::StringArray::fromTokens (rel, "/", "");
+            parts.removeEmptyStrings();
+            while (parts.size() > 2) parts.remove (0);       // « Cello Section/spic »
+            names[key] = parts.joinIntoString (" - ");
+        }
+        outDir.createDirectory();
+        int made = 0, index = 0;
+        for (auto& [key, samples] : groups)
+        {
+            if (progress) progress ((float) index++ / (float) juce::jmax<size_t> (1, groups.size()));
+            std::set<int> notes;
+            for (auto& s : samples) notes.insert (s.note);
+            if (notes.size() < 3) continue;                                   // pas un instrument joué sur une tessiture
+            // Octave : hauteur mesurée d'un échantillon du milieu de la tessiture.
+            int offset = 0;
+            {
+                const int mid = *std::next (notes.begin(), (long) notes.size() / 2);
+                for (auto& s : samples)
+                    if (s.note == mid)
+                    {
+                        const double hz = measurePitch (s.file);
+                        if (hz > 0)
+                        {
+                            const double measured = 69.0 + 12.0 * std::log2 (hz / 440.0);
+                            offset = juce::jlimit (-24, 24, juce::roundToInt ((measured - mid) / 12.0) * 12);
+                        }
+                        break;
+                    }
+            }
+            std::vector<int> layers;
+            int maxRr = 1;
+            for (auto& s : samples) { if (std::find (layers.begin(), layers.end(), s.layer) == layers.end()) layers.push_back (s.layer); maxRr = std::max (maxRr, s.rr); }
+            std::sort (layers.begin(), layers.end());
+            const std::vector<int> noteList (notes.begin(), notes.end());
+            const auto artName = names[key] + (samples.front().prefix.isNotEmpty() && ! names[key].containsIgnoreCase (samples.front().prefix) ? " " + samples.front().prefix : juce::String());
+            const auto lower = artName.toLowerCase();
+            const bool shortArt = lower.contains ("spic") || lower.contains ("pizz") || lower.contains ("stac") || lower.contains ("hit") || lower.contains ("short");
+            juce::String sfzText;
+            sfzText << "// Instrument créé par Onde à partir des échantillons de « " << names[key] << " »\n";
+            sfzText << "<global> ampeg_release=" << (shortArt ? "0.12" : "0.35") << (shortArt ? " loop_mode=one_shot" : "") << "\n";
+            for (auto& s : samples)
+            {
+                const auto it = std::find (noteList.begin(), noteList.end(), s.note);
+                const size_t i = (size_t) std::distance (noteList.begin(), it);
+                const int lo = i == 0 ? s.note - 4 : (noteList[i - 1] + s.note) / 2 + 1;
+                const int hi = i + 1 == noteList.size() ? s.note + 4 : (s.note + noteList[i + 1]) / 2;
+                const size_t li = (size_t) std::distance (layers.begin(), std::find (layers.begin(), layers.end(), s.layer));
+                const int lovel = 1 + (int) (127 * li / layers.size()), hivel = (int) (127 * (li + 1) / layers.size());
+                sfzText << "<region> sample=" << s.file.getRelativePathFrom (outDir).replaceCharacter ('\\', '/')
+                        << " pitch_keycenter=" << (s.note + offset) << " lokey=" << juce::jlimit (0, 127, lo + offset) << " hikey=" << juce::jlimit (0, 127, hi + offset)
+                        << " lovel=" << lovel << " hivel=" << hivel;
+                if (maxRr > 1) sfzText << " seq_length=" << maxRr << " seq_position=" << juce::jlimit (1, maxRr, s.rr);
+                sfzText << "\n";
+            }
+            const auto file = outDir.getChildFile (juce::File::createLegalFileName (artName.trim()) + ".sfz");
+            if (file.replaceWithText (sfzText)) ++made;
+        }
+        if (progress) progress (1.0f);
+        return made;
+    }
+
     juce::Result installFromZip (const Info& info, const juce::File& zipFile, std::function<void (float)> progress)
     {
         juce::ZipFile zip (zipFile);
@@ -55,6 +201,8 @@ namespace libraries
             if (! out.openedOk()) return juce::Result::fail (juce::String::fromUTF8 ("écriture impossible : ") + target.getFullPathName());
             out.writeFromInputStream (*in, -1);
         }
+        // Bibliothèque sans fichiers SFZ (échantillons seuls, comme VSCO 2) : instruments créés à partir des noms.
+        if (ondefx::findInstruments (dest).isEmpty()) buildInstrumentsFromSamples (dest, dest.getChildFile ("Instruments Onde"), nullptr);
         if (progress) progress (1.0f);
         return ondefx::findInstruments (dest).isEmpty() ? juce::Result::fail (juce::String::fromUTF8 ("aucun instrument SFZ dans cette archive")) : juce::Result::ok();
     }
