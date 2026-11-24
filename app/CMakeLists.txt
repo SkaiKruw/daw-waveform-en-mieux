@@ -31,7 +31,7 @@ target_sources(Onde PRIVATE
     Source/Main.cpp Source/MainComponent.cpp Source/SandboxPlugin.cpp Source/DemoContent.cpp
     Source/EditContext.cpp Source/PluginCatalog.cpp Source/ArrangementView.cpp Source/MixerView.cpp
     Source/PianoRollView.cpp Source/CommandPalette.cpp Source/Panels.cpp Source/AudioEditorView.cpp Source/Exporter.cpp Source/StemSeparator.cpp
-    Source/QrCode.cpp Source/RemoteControl.cpp Source/RemotePanel.cpp Source/Logo.cpp Source/AboutPanel.cpp Source/HubPanel.cpp Source/HistoryPanel.cpp Source/ModulatorPanel.cpp Source/KeyboardPanel.cpp Source/OndeSynth.cpp Source/LibraryPanel.cpp Source/OndeFx2.cpp Source/Chains.cpp Source/Drummer.cpp Source/DrummerPanel.cpp Source/NewTrackPanel.cpp Source/Lyrics.cpp Source/TabView.cpp
+    Source/QrCode.cpp Source/RemoteControl.cpp Source/RemotePanel.cpp Source/Logo.cpp Source/AboutPanel.cpp Source/HubPanel.cpp Source/HistoryPanel.cpp Source/ModulatorPanel.cpp Source/KeyboardPanel.cpp Source/OndeSynth.cpp Source/OndeSynthEditor.cpp Source/LibraryPanel.cpp Source/OndeFx2.cpp Source/Chains.cpp Source/Drummer.cpp Source/DrummerPanel.cpp Source/NewTrackPanel.cpp Source/Lyrics.cpp Source/TabView.cpp Source/Preferences.cpp
     Source/OndeEffects.cpp Source/OndeEffectEditors.cpp)
 target_compile_definitions(Onde PRIVATE ${ONDE_JUCE_DEFS})
 if(MSVC)

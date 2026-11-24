@@ -1,6 +1,7 @@
 // Onde Synth : instrument intégré d'Onde (code et sons originaux), quatre moteurs de synthèse :
 //   Analogique (oscillateurs, filtre 24 dB, unisson) · FM (pianos électriques, cloches) ·
 //   Piano (partiels inharmoniques, deux cordes, marteau) · Batterie (sons synthétisés, notes General MIDI).
+//   Cordes pincées (modèle physique : corde à guide d'onde, médiator, caisse) : guitares, basses, harpe, ukulélé.
 // Les préréglages (bibliothèque) ne sont que des jeux de valeurs de paramètres : rien à télécharger.
 #pragma once
 #include "OndeEffects.h"
@@ -42,7 +43,11 @@ namespace ondefx
         static const SynthPreset* findPreset (const juce::String& name);
         void applyPreset (const SynthPreset&);                      // annulable (transaction de l'appelant)
         juce::String getPresetName() const                          { return presetName.get(); }
-        static constexpr const char* engineNames[4] = { "Analogique", "FM", "Piano", "Batterie" };
+        static constexpr const char* engineNames[5] = { "Analogique", "FM", "Piano", "Batterie", "Cordes pincées" };
+        static constexpr int numEngines = 5;
+        // Écoute depuis la fenêtre (clavier de la fenêtre, pads) : notes injectées dans le flux MIDI du prochain bloc.
+        void auditionNote (int note, float velocity);    // velocity 0 : relâcher
+        static int engineOf (const SynthPreset&);
 
         struct Voice;
     private:
@@ -59,6 +64,15 @@ namespace ondefx
         void noteOn (int note, float velocity);
         void noteOff (int note);
         void renderVoices (float* l, float* r, int start, int n);
+        // Caisse de résonance des cordes pincées (commune à toutes les voix de ce moteur).
+        struct Resonator { float b0 = 0, a1 = 0, a2 = 0, z1[2] {}, z2[2] {}; };
+        Resonator body[4];
+        int bodyType = -1;
+        float bodyGain[4] {}, bodyDry = 1.0f;
+        std::vector<float> pluckL, pluckR;
+        void setupBody (int type);
+        juce::AbstractFifo auditionFifo { 64 };
+        std::array<std::pair<int, float>, 64> auditionQueue {};
     };
 
     std::unique_ptr<juce::Component> createSynthEditor (SynthPlugin&);

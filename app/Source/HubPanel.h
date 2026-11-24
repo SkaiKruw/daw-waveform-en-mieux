@@ -27,6 +27,7 @@ private:
     void returnKeyPressed (int row) override { openRecent (row); }
     void openRecent (int row);
     void closeHub();
+    void showTemplatesMenu();
 
     MainComponent& main;
     juce::OwnedArray<Card> cards;

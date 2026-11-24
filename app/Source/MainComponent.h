@@ -52,6 +52,15 @@ public:
     static void rememberProject (const juce::File&);
     static inline bool testMode = false;              // modes --xxx-test : liste de projets récents séparée
     void showHub();
+    // Paramètres de l'application (onglet : 0 général, 1 audio, 2 interface, 3 plugins, 4 modèles).
+    void showPreferences (int tab = 0);
+    PluginCatalog& getCatalog() { return catalog; }
+    // Modèles personnels : le projet ouvert sans ses événements (pistes, sons, effets, routage, tempo, repères).
+    static juce::File templatesFolder();
+    static juce::Array<juce::File> userTemplates();
+    bool saveAsTemplate (const juce::String& name, bool keepEvents);
+    void askSaveAsTemplate (std::function<void()> done = nullptr);
+    bool newProjectFromUserTemplate (const juce::File&);
     // Après création ou ouverture : les plugins écrivent leur état juste après ; sans action de l'utilisateur
     // (historique vide), le projet doit rester « non modifié » (pas de question à la fermeture).
     void markCleanWhenSettled();
@@ -146,7 +155,7 @@ private:
     CommandPalette palette { ctx };
     RemoteControl remote { ctx };                       // télécommande depuis un téléphone
     juce::Component::SafePointer<juce::DialogWindow> remoteWindow;
-    juce::Component::SafePointer<juce::DialogWindow> hubWindow, historyWindow, modulatorWindow, keyboardWindow, libraryWindow, drummerWindow, lyricsWindow;
+    juce::Component::SafePointer<juce::DialogWindow> hubWindow, preferencesWindow, historyWindow, modulatorWindow, keyboardWindow, libraryWindow, drummerWindow, lyricsWindow;
     std::map<juce::String, juce::Component::SafePointer<juce::DialogWindow>> effectWindows;   // fenêtres des effets Onde
     juce::String status;
     juce::String paintedStatus;

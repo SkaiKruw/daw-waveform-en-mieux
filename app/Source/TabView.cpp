@@ -18,6 +18,8 @@ const std::vector<TabView::Tuning>& TabView::tunings()
         { "Guitare drop D (Ré La Ré Sol Si Mi)",   { 64, 59, 55, 50, 45, 38 } },
         { "Guitare open G (Ré Sol Ré Sol Si Ré)",  { 62, 59, 55, 50, 43, 38 } },
         { "Guitare 7 cordes (Si Mi La Ré Sol Si Mi)", { 64, 59, 55, 50, 45, 40, 35 } },
+        { "Guitare 8 cordes (Fa# Si Mi La Ré Sol Si Mi)", { 64, 59, 55, 50, 45, 40, 35, 30 } },
+        { "Guitare 12 cordes (accord standard)", { 64, 59, 55, 50, 45, 40 } },
         { "Basse 4 cordes (Mi La Ré Sol)",          { 43, 38, 33, 28 } },
         { "Basse 5 cordes (Si Mi La Ré Sol)",       { 43, 38, 33, 28, 23 } },
         { "Ukulélé (Sol Do Mi La)",                  { 69, 64, 60, 67 } },

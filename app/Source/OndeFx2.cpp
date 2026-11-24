@@ -753,8 +753,11 @@ namespace ondefx
         };
     }
 
+    std::unique_ptr<juce::Component> createModulationEditor (ModulationPlugin&);
+
     std::unique_ptr<juce::Component> createFx2Editor (te::Plugin& p)
     {
+        if (auto* m = dynamic_cast<ModulationPlugin*> (&p)) return createModulationEditor (*m);
         if (auto* s = dynamic_cast<SaturationPlugin*> (&p)) return std::make_unique<SaturationEditor> (*s);
         if (auto* e = dynamic_cast<EchoPlugin*> (&p))       return std::make_unique<EchoEditor> (*e);
         if (auto* r = dynamic_cast<SpacePlugin*> (&p))      return std::make_unique<SpaceEditor> (*r);
@@ -864,4 +867,225 @@ namespace ondefx
                 }
         }
     }
+}
+
+namespace ondefx
+{
+    //==============================================================================
+    const char* ModulationPlugin::xmlTypeName = "ondeModulation";
+
+    ModulationPlugin::ModulationPlugin (te::PluginCreationInfo info) : OndeEffect (info)
+    {
+        juce::NormalisableRange<float> rateR (0.03f, 10.0f); rateR.setSkewForCentre (0.8f);
+        declare ("mode", "Effet", { 0.0f, 4.0f, 1.0f }, 0.0f, choiceText (modeNames, 5));
+        declare ("rate", "Vitesse", rateR, 0.8f, [] (float v) { return juce::String (v, v < 1.0f ? 2 : 1) + " Hz"; });
+        declare ("depth", "Profondeur", { 0.0f, 100.0f }, 50.0f, pctText);
+        declare ("delay", juce::String::fromUTF8 ("Retard"), { 2.0f, 30.0f }, 12.0f, [] (float v) { return juce::String (v, 1) + " ms"; });
+        declare ("feedback", juce::String::fromUTF8 ("Réinjection"), { -95.0f, 95.0f }, 0.0f, [] (float v) { return juce::String (juce::roundToInt (v)) + " %"; });
+        declare ("width", "Largeur", { 0.0f, 100.0f }, 70.0f, pctText);
+        declare ("mix", juce::String::fromUTF8 ("Mélange"), { 0.0f, 100.0f }, 50.0f, pctText);
+    }
+
+    void ModulationPlugin::initialise (const te::PluginInitialisationInfo& info)
+    {
+        rate = info.sampleRate;
+        int size = 1; while (size < (int) (rate * 0.08)) size <<= 1;      // 80 ms au moins
+        for (auto& l : line) l.assign ((size_t) size, 0.0f);
+        mask = size - 1;
+        reset();
+    }
+
+    void ModulationPlugin::reset()
+    {
+        for (auto& l : line) std::fill (l.begin(), l.end(), 0.0f);
+        writePos = 0;
+        for (auto& f : fbState) f = 0;
+        for (auto& c : ap) for (auto& z : c) z = 0;
+        for (auto& w : wetLP) w = 0;
+    }
+
+    float ModulationPlugin::delayMsAt (int mode, double ph) const
+    {
+        const float s = (float) std::sin (juce::MathConstants<double>::twoPi * ph);
+        const float depth = value ("depth") / 100.0f, centre = value ("delay");
+        switch (mode)
+        {
+            case 0:  return centre + centre * 0.45f * depth * s;
+            case 1:  return centre * 0.9f + centre * 0.35f * depth * s;
+            case 2:  { const float c = 0.3f + centre * 0.12f; return juce::jmax (0.08f, c * (1.0f + 0.95f * depth * s)); }
+            case 3:  return 150.0f * std::pow (2.0f, (s + 1.0f) * 0.5f * (1.0f + depth * 4.0f));     // Hz du phaser
+            default: return 5.0f + 4.0f * depth * s;
+        }
+    }
+
+    void ModulationPlugin::applyToBuffer (const te::PluginRenderContext& fc)
+    {
+        if (fc.destBuffer == nullptr || line[0].empty()) return;
+        auto& buf = *fc.destBuffer;
+        const int chans = juce::jmin (2, buf.getNumChannels()), n = fc.bufferNumSamples, start = fc.bufferStartSample;
+        if (chans == 0) return;
+        const int mode = juce::jlimit (0, 4, juce::roundToInt (value ("mode")));
+        const double inc = value ("rate") / rate;
+        const float fb = value ("feedback") / 100.0f, width = value ("width") / 100.0f, mix = value ("mix") / 100.0f;
+        const float wetLPc = 1.0f - std::exp (-juce::MathConstants<float>::twoPi * 7000.0f / (float) rate);
+        auto readAt = [this] (int c, float delaySamples)
+        {
+            // Lecture interpolée (Hermite à 4 points) dans la ligne à retard.
+            const float pos = (float) writePos - delaySamples;
+            const int i = (int) std::floor (pos);
+            const float t = pos - (float) i;
+            const auto& l = line[c];
+            const float y0 = l[(size_t) ((i - 1) & mask)], y1 = l[(size_t) (i & mask)], y2 = l[(size_t) ((i + 1) & mask)], y3 = l[(size_t) ((i + 2) & mask)];
+            const float c1 = 0.5f * (y2 - y0), c2 = y0 - 2.5f * y1 + 2.0f * y2 - 0.5f * y3, c3 = 0.5f * (y3 - y0) + 1.5f * (y1 - y2);
+            return ((c3 * t + c2) * t + c1) * t + y1;
+        };
+        const float msToS = (float) rate / 1000.0f;
+        float apCoef[2] {};
+        for (int i = 0; i < n; ++i)
+        {
+            for (int c = 0; c < chans; ++c)
+            {
+                float* d = buf.getWritePointer (c, start);
+                const float x = d[i];
+                const double ph = phase + (c == 1 ? 0.25 * width : 0.0);
+                float wet = 0;
+                switch (mode)
+                {
+                    case 0:
+                        wet = 0.5f * (readAt (c, delayMsAt (0, ph) * msToS) + readAt (c, delayMsAt (0, ph + 0.5) * msToS));
+                        line[c][(size_t) writePos] = x;
+                        break;
+                    case 1:
+                    {
+                        const float wobble = 0.15f * (float) std::sin (juce::MathConstants<double>::twoPi * (phase2 + c * 0.3));
+                        for (int v = 0; v < 3; ++v) wet += readAt (c, (delayMsAt (1, ph + v / 3.0) + wobble) * msToS);
+                        wet *= 0.4f;
+                        wetLP[c] += wetLPc * (wet - wetLP[c]); wet = wetLP[c];
+                        line[c][(size_t) writePos] = x;
+                        break;
+                    }
+                    case 2:
+                        wet = readAt (c, delayMsAt (2, ph) * msToS);
+                        line[c][(size_t) writePos] = x + fb * wet;
+                        break;
+                    case 3:
+                    {
+                        if ((i & 7) == 0)
+                        {
+                            const float t = std::tan (juce::MathConstants<float>::pi * juce::jmin (delayMsAt (3, ph), (float) rate * 0.45f) / (float) rate);
+                            apCoef[c] = (t - 1.0f) / (t + 1.0f);
+                        }
+                        float s = x + fb * fbState[c];
+                        for (auto& z : ap[c]) { const float y = apCoef[c] * s + z; z = s - apCoef[c] * y; s = y; }
+                        fbState[c] = s;
+                        wet = s;
+                        break;
+                    }
+                    default:
+                        wet = readAt (c, delayMsAt (4, ph) * msToS);
+                        line[c][(size_t) writePos] = x;
+                        break;
+                }
+                d[i] = x * (1.0f - mix) + wet * mix;
+            }
+            writePos = (writePos + 1) & mask;
+            phase += inc; if (phase >= 1.0) phase -= 1.0;
+            phase2 += inc * 6.3; if (phase2 >= 1.0) phase2 -= 1.0;
+        }
+        lfoPhase = (float) phase;
+    }
+
+    namespace
+    {
+        // Fenêtre : choix de l'effet, courbe de l'oscillateur (gauche et droite) qui défile, réglages, préréglages.
+        class ModulationEditor  : public FxWindow
+        {
+        public:
+            explicit ModulationEditor (ModulationPlugin& p) : FxWindow (p, U8 ("Chorus, ensemble, flanger, phaser, vibrato · largeur stéréo"), juce::Colour (0xff5ad1e6)), mod (p)
+            {
+                for (int i = 0; i < 5; ++i)
+                {
+                    auto* b = modeButtons.add (new juce::TextButton (ModulationPlugin::modeNames[i]));
+                    b->setColour (juce::TextButton::buttonOnColourId, colour);
+                    b->setColour (juce::TextButton::textColourOnId, juce::Colours::black);
+                    b->onClick = [this, i] { mod.edit.getUndoManager().beginNewTransaction (U8 ("Effet de modulation")); mod.setStored ("mode", (float) i); };
+                    modes.addAndMakeVisible (b);
+                }
+                addAndMakeVisible (modes);
+                knob ("rate", "Vitesse"); knob ("depth", "Profondeur"); knob ("delay", "Retard");
+                knob ("feedback", "Réinjection"); knob ("width", "Largeur"); knob ("mix", "Mélange");
+                preset ("Chorus doux", { { "mode", 0 }, { "rate", 0.6f }, { "depth", 35 }, { "delay", 14 }, { "feedback", 0 }, { "width", 80 }, { "mix", 45 } });
+                preset (U8 ("Ensemble à cordes"), { { "mode", 1 }, { "rate", 0.5f }, { "depth", 60 }, { "delay", 10 }, { "feedback", 0 }, { "width", 100 }, { "mix", 60 } });
+                preset ("Flanger jet", { { "mode", 2 }, { "rate", 0.15f }, { "depth", 80 }, { "delay", 12 }, { "feedback", 70 }, { "width", 50 }, { "mix", 50 } });
+                preset ("Phaser lent", { { "mode", 3 }, { "rate", 0.25f }, { "depth", 55 }, { "delay", 12 }, { "feedback", 45 }, { "width", 60 }, { "mix", 50 } });
+                preset ("Vibrato", { { "mode", 4 }, { "rate", 5.5f }, { "depth", 30 }, { "delay", 12 }, { "feedback", 0 }, { "width", 0 }, { "mix", 100 } });
+                setSize (860, 460);
+            }
+            void resized() override
+            {
+                layout (30, &modes);
+                const int w = modes.getWidth() / 5;
+                for (int i = 0; i < modeButtons.size(); ++i) modeButtons[i]->setBounds (i * w, 0, w - 4, modes.getHeight());
+            }
+        private:
+            void paintDisplay (juce::Graphics& g, juce::Rectangle<float> r) override
+            {
+                const int mode = juce::jlimit (0, 4, juce::roundToInt (mod.value ("mode")));
+                const float rateHz = mod.value ("rate"), width = mod.value ("width") / 100.0f;
+                auto info = r.removeFromBottom (18.0f);
+                const float span = juce::jlimit (1.0f, 8.0f, 2.0f / juce::jmax (0.05f, rateHz));      // deux cycles affichés
+                // Échelle verticale : retard (ms) ou fréquence (Hz, logarithmique) selon l'effet.
+                float lo = 1e9f, hi = -1e9f;
+                for (int k = 0; k < 64; ++k) { const float v = mod.delayMsAt (mode, k / 64.0); lo = std::min (lo, v); hi = std::max (hi, v); }
+                if (mode == 3) { lo = std::log (lo); hi = std::log (hi); }
+                if (hi - lo < 1.0e-3f) { lo -= 1.0f; hi += 1.0f; }
+                const float pad = (hi - lo) * 0.15f; lo -= pad; hi += pad;
+                auto yOf = [&] (float v) { if (mode == 3) v = std::log (v); return r.getBottom() - (v - lo) / (hi - lo) * r.getHeight(); };
+                g.setColour (gridLine);
+                for (int k = 1; k < 4; ++k) g.drawHorizontalLine ((int) (r.getY() + r.getHeight() * k / 4.0f), r.getX(), r.getRight());
+                const double now = mod.lfoPhase.load();
+                const int voices = mode == 0 ? 2 : mode == 1 ? 3 : 1;
+                const juce::Colour right (0xffb98cff);
+                for (int ch = 1; ch >= 0; --ch)
+                    for (int v = 0; v < voices; ++v)
+                    {
+                        juce::Path p;
+                        for (int i = 0; i <= 240; ++i)
+                        {
+                            const double ph = now - (1.0 - i / 240.0) * span * rateHz + (ch == 1 ? 0.25 * width : 0.0) + (double) v / voices;
+                            const float x = r.getX() + r.getWidth() * i / 240.0f, y = yOf (mod.delayMsAt (mode, ph));
+                            if (i == 0) p.startNewSubPath (x, y); else p.lineTo (x, y);
+                        }
+                        const auto c = ch == 0 ? colour : right;
+                        g.setColour (c.withAlpha (v == 0 ? 0.95f : 0.45f));
+                        g.strokePath (p, juce::PathStrokeType (v == 0 ? 2.0f : 1.2f));
+                        if (v == 0)
+                        {
+                            const float y = yOf (mod.delayMsAt (mode, now + (ch == 1 ? 0.25 * width : 0.0)));
+                            g.fillEllipse (r.getRight() - 5.0f, y - 5.0f, 10.0f, 10.0f);
+                        }
+                    }
+                g.setFont (theme::ui (11.0f, true));
+                g.setColour (colour); g.drawText ("G", (int) r.getX() + 4, (int) r.getY() + 2, 20, 14, juce::Justification::left);
+                g.setColour (right); g.drawText ("D", (int) r.getX() + 18, (int) r.getY() + 2, 20, 14, juce::Justification::left);
+                g.setColour (theme::muted); g.setFont (theme::ui (11.5f));
+                const float a = mod.delayMsAt (mode, 0.75), b = mod.delayMsAt (mode, 0.25);
+                const juce::String range = mode == 3 ? juce::String (juce::roundToInt (a)) + U8 (" à ") + juce::String (juce::roundToInt (b)) + U8 (" Hz (creux du phaser)")
+                                                     : juce::String (a, 1) + U8 (" à ") + juce::String (b, 1) + U8 (" ms de retard");
+                g.drawText (juce::String::fromUTF8 (ModulationPlugin::modeNames[mode]) + U8 (" · ") + range + U8 (" · un cycle toutes les ")
+                            + juce::String (1.0f / rateHz, 2) + " s", info, juce::Justification::centredLeft);
+            }
+            void timerCallback() override
+            {
+                const int mode = juce::roundToInt (mod.value ("mode"));
+                for (int i = 0; i < modeButtons.size(); ++i) modeButtons[i]->setToggleState (i == mode, juce::dontSendNotification);
+                FxWindow::timerCallback();
+            }
+            ModulationPlugin& mod;
+            juce::Component modes;
+            juce::OwnedArray<juce::TextButton> modeButtons;
+        };
+    }
+
+    std::unique_ptr<juce::Component> createModulationEditor (ModulationPlugin& m) { return std::make_unique<ModulationEditor> (m); }
 }

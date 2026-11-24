@@ -38,6 +38,13 @@ namespace
                 for (int i : { 1, 2, 4 }) g.fillRect (k.getX() + k.getWidth() * i / 5.0f - 3.0f, k.getY(), 6.0f, k.getHeight() * 0.58f);
                 break;
             }
+            case 4:   // mes modèles : des cartes empilées
+                for (int k = 2; k >= 0; --k)
+                {
+                    auto c = r.reduced (r.getWidth() * 0.2f, r.getHeight() * 0.26f).translated (k * 4.0f - 4.0f, -k * 5.0f + 5.0f);
+                    if (k == 0) g.fillRoundedRectangle (c, 3.0f); else g.drawRoundedRectangle (c, 3.0f, 2.0f);
+                }
+                break;
             default:  // démonstration : une onde
                 for (int i = 0; i <= 40; ++i)
                 {
@@ -101,13 +108,21 @@ HubPanel::HubPanel (MainComponent& m) : main (m)
         { 1, "Enregistrement",         "Voix, guitare, basse, batterie et une réverbération : prêt à enregistrer.", 0xffe8697a },
         { 2, "Production",             "Batterie, basse, accords, nappe et lead prêts à jouer, une voix, une réverbération.", 0xff3fa4ff },
         { 3, "Démonstration", "« Nuits du Nord » : 8 mesures avec batterie, basse, pad et synthé VST3.",   0xff2de2c6 },
+        { 4, "Mes modèles",            "", 0xffc58cff },
     };
     for (auto& d : defs)
     {
-        auto* c = cards.add (new Card (d.kind, U (d.title), U (d.desc), juce::Colour (d.colour)));
+        juce::String desc = U (d.desc);
+        if (d.kind == 4)
+        {
+            const auto n = MainComponent::userTemplates().size();
+            desc = n == 0 ? U ("Vos points de départ : Fichier › Enregistrer comme modèle…") : juce::String (n) + (n > 1 ? U (" modèles enregistrés") : U (" modèle enregistré")) + U (" : choisir…");
+        }
+        auto* c = cards.add (new Card (d.kind, U (d.title), desc, juce::Colour (d.colour)));
         const int kind = d.kind;
         c->onClick = [this, kind]
         {
+            if (kind == 4) { showTemplatesMenu(); return; }
             if (kind == 3) { if (main.onOpenDemo) main.onOpenDemo(); }
             else main.newProjectFromTemplate (kind);
             closeHub();
@@ -140,7 +155,7 @@ HubPanel::HubPanel (MainComponent& m) : main (m)
     startup.setColour (juce::ToggleButton::textColourId, theme::muted);
     startup.onClick = [this] { setShowAtStartup (startup.getToggleState()); };
     addAndMakeVisible (startup);
-    setSize (880, 520);
+    setSize (880, 600);
 }
 
 HubPanel::~HubPanel() { list.setModel (nullptr); }
@@ -161,7 +176,7 @@ void HubPanel::resized()
     r.reduce (28, 24);
     newTitle = r.removeFromTop (26);
     r.removeFromTop (8);
-    auto grid = r.removeFromTop (2 * 84 + 10);
+    auto grid = r.removeFromTop (3 * 84 + 20);
     const int cw = (grid.getWidth() - 12) / 2;
     for (int i = 0; i < cards.size(); ++i)
         cards[i]->setBounds (grid.getX() + (i % 2) * (cw + 12), grid.getY() + (i / 2) * 94, cw, 84);
@@ -245,4 +260,22 @@ juce::DialogWindow* HubPanel::show (MainComponent& m)
     o.useNativeTitleBar = true;
     o.resizable = false;
     return o.launchAsync();
+}
+
+void HubPanel::showTemplatesMenu()
+{
+    juce::PopupMenu m;
+    const auto files = MainComponent::userTemplates();
+    m.addSectionHeader (U ("Mes modèles"));
+    for (int i = 0; i < files.size(); ++i) m.addItem (1 + i, files[i].getFileNameWithoutExtension());
+    if (files.isEmpty()) m.addItem (-1, U ("Aucun modèle pour l'instant"), false);
+    m.addSeparator();
+    m.addItem (1000, U ("Enregistrer le projet ouvert comme modèle…"));
+    m.addItem (1001, U ("Gérer les modèles…"));
+    m.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (cards.getLast()), [this, files] (int r)
+    {
+        if (r >= 1 && r <= files.size()) { if (main.newProjectFromUserTemplate (files[r - 1])) closeHub(); }
+        else if (r == 1000) main.askSaveAsTemplate();
+        else if (r == 1001) { main.showPreferences (4); closeHub(); }
+    });
 }

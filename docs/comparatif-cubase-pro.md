@@ -14,7 +14,7 @@ que les utilisateurs mettent en avant dans les tests de logiciels et de plugins.
 | Repères, délimiteurs, cycle | ✅ | |
 | Dossiers, groupes (sous-mixage) | ✅ | |
 | Historique des modifications | ✅ | |
-| Écran d'accueil (Hub), modèles de projet | ✅ | |
+| Écran d'accueil (Hub), modèles de projet, modèles personnels, fenêtre de paramètres | ✅ | Fichier › Enregistrer comme modèle, Fichier › Paramètres |
 | Piste d'arrangement (sections, enchaînements) | ❌ | priorité moyenne |
 | Piste d'accords, assistant d'accords | ❌ | |
 | Versions de piste, couloirs et comping de prises | ❌ | priorité haute pour l'enregistrement |
@@ -37,7 +37,7 @@ que les utilisateurs mettent en avant dans les tests de logiciels et de plugins.
 | Séquenceur de motifs | ❌ | |
 | Éditeur de partition | 🟡 | tablature (guitare, basse, ukulélé) ; pas de portée classique |
 | Échantillonneur (piste sampler) | ❌ | |
-| Instruments intégrés | ✅ | Onde Synth (4 moteurs, 30 sons), 4OSC ; VST3 isolés |
+| Instruments intégrés | ✅ | Onde Synth (5 moteurs dont cordes pincées en modèle physique, 44 sons), 4OSC ; VST3 isolés |
 
 ## Mixage et effets
 
@@ -57,7 +57,7 @@ que les utilisateurs mettent en avant dans les tests de logiciels et de plugins.
 | Faders VCA | ✅ | dossier VCA |
 | Inversion de polarité, analyse du mix (LUFS, crête vraie, corrélation), écoute mono et atténuée | ✅ | MixConsole ; l'écoute n'agit jamais sur l'export |
 | Control Room | 🟡 | Mono et -20 dB sur la sortie ; pas de sorties casque séparées |
-| Réverbération, delay, modulation, saturation de qualité | ✅ | Onde Espace, Onde Écho, Onde Saturation (chorus et modulation : à faire) |
+| Réverbération, delay, modulation, saturation de qualité | ✅ | Onde Espace, Onde Écho, Onde Saturation, Onde Modulation (chorus, ensemble, flanger, phaser, vibrato) |
 | Séparation de sources (stems) | ✅ | **avantage d'Onde** : Demucs v4 intégré |
 
 ## Fichiers, export, autres
@@ -79,7 +79,9 @@ que les utilisateurs mettent en avant dans les tests de logiciels et de plugins.
 4. ~~Geler une piste ; faders VCA ; paroles ; tablature ; analyse du mix~~ : fait.
 5. Couloirs de prises et comping.
 6. Piste d'arrangement.
-7. Effets Onde : réverbération, delay, saturation, de-esser, gate.
+7. ~~Effets Onde : réverbération, delay, saturation, modulation~~ : fait. Reste : de-esser, gate.
+8. ~~Paramètres, modèles personnels, fenêtre d'instrument redessinée~~ : fait.
+9. Instruments échantillonnés (piano, batterie, cordes enregistrés) en packs téléchargeables à la demande, hors installateur.
 
 ## « Tout est déjà là » : l'accueil d'un logiciel grand public, la puissance de Cubase
 
@@ -90,7 +92,7 @@ ni l'apparence : instruments, sons et boucles sont créés par Onde, de façon o
 
 | Ce qu'on attend en ouvrant le logiciel | Onde aujourd'hui | Ce qu'il faut faire |
 | --- | --- | --- |
-| Des instruments prêts à jouer, rangés par famille (piano, claviers, basses, cordes, nappes, leads, batterie) | ✅ **Onde Synth** : 4 moteurs, 30 sons en 8 familles | **Bibliothèque d'instruments Onde** : moteurs de synthèse originaux (piano et piano électrique par modélisation, basses, nappes, cordes, cuivres synthétiques, boîte à rythmes par synthèse) avec des dizaines de préréglages nommés en français. Rien à télécharger. |
+| Des instruments prêts à jouer, rangés par famille (piano, claviers, basses, cordes, nappes, leads, batterie) | ✅ **Onde Synth** : 5 moteurs (dont cordes pincées en modèle physique : guitares 6, 7, 8, 12 cordes, basses, harpe), 44 sons en 10 familles | **Bibliothèque d'instruments Onde** : moteurs de synthèse originaux (piano et piano électrique par modélisation, basses, nappes, cordes, cuivres synthétiques, boîte à rythmes par synthèse) avec des dizaines de préréglages nommés en français. Rien à télécharger. |
 | Une batterie qui joue toute seule et suit le morceau | ✅ Batteur (6 styles, pavé, remplissages) ; 🟡 suivre la piste d'arrangement : à faire | **Batteur Onde** : styles (pop, rock, hip-hop, électro, ballade), complexité et intensité réglables, remplissages en fin de section, suit la piste d'arrangement. |
 | Des boucles à glisser, calées sur le tempo et la tonalité du projet | ❌ | **Boucles Onde** : générées par Onde à partir de ses instruments (batterie, basse, accords, arpèges), toujours au tempo et dans la tonalité du projet, prévisualisation en un clic. |
 | Quelques gros boutons simples par instrument | ✅ commandes rapides (chaînes et Onde Synth) | **Commandes rapides** : 4 à 8 macros par piste (« Chaleur », « Espace », « Brillance », « Punch ») qui pilotent plusieurs réglages à la fois (s'appuie sur les modulateurs et l'automation de tous les paramètres). |

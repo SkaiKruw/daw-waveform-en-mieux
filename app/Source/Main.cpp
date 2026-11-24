@@ -5,6 +5,7 @@
 //   Onde --stems-test <dossier>   séparateur de sources : précision (SDR) et import (vérification)
 #include <JuceHeader.h>
 #include "MainComponent.h"
+#include "Preferences.h"
 #include "OndeSynth.h"
 #include "OndeFx2.h"
 #include "Chains.h"
@@ -427,6 +428,7 @@ public:
             return;
         }
 
+        prefs::applyUiScale();                         // taille de l'interface choisie dans les paramètres
         settings = std::make_unique<juce::PropertiesFile> (appDataDir().getChildFile ("reglages.xml"), juce::PropertiesFile::Options());
         const bool crashedLastTime = settings->getBoolValue ("sessionOpen", false);
         settings->setValue ("sessionOpen", true);
@@ -1715,6 +1717,42 @@ private:
             const auto rec = names();
             check (rec.joinIntoString (",").startsWith ("Voix,Guitare,Basse,Batterie") && rec.size() == 5 && ! mc->getEdit()->hasChangedSinceSaved(),
                    U ("modèle « Enregistrement » : ") + rec.joinIntoString (", "));
+
+            // Modèles personnels (sans les événements, ou avec) et paramètres de l'application.
+            {
+                auto& e0 = *mc->getEdit();
+                const auto names0 = names();
+                te::getAudioTracks (e0).getFirst()->insertMIDIClip ("motif", { te::TimePosition(), te::TimePosition::fromSeconds (2.0) }, nullptr);
+                MainComponent::templatesFolder().deleteRecursively();
+                const bool savedEmpty = mc->saveAsTemplate (U ("Mon modèle"), false);
+                const bool savedFull = mc->saveAsTemplate (U ("Mon modèle avec événements"), true);
+                const auto files = MainComponent::userTemplates();
+                auto byName = [&] (const char* n) { for (auto& f : files) if (f.getFileNameWithoutExtension() == U (n)) return f; return juce::File(); };
+                auto countClips = [&] { int n = 0; for (auto* t : te::getAudioTracks (*mc->getEdit())) n += t->getClips().size(); return n; };
+                const bool openedEmpty = files.size() == 2 && mc->newProjectFromUserTemplate (byName ("Mon modèle"));
+                const auto names1 = names();
+                const int clipsEmpty = countClips();
+                const bool clean = ! mc->getEdit()->hasChangedSinceSaved();
+                const bool openedFull = files.size() == 2 && mc->newProjectFromUserTemplate (byName ("Mon modèle avec événements"));
+                const int clipsFull = countClips();
+                check (savedEmpty && savedFull && openedEmpty && openedFull && names1 == names0 && clipsEmpty == 0 && clipsFull == 1 && clean,
+                       U ("modèles personnels : ") + juce::String (files.size()) + U (" enregistrés, rouverts avec les pistes « ") + names1.joinIntoString (", ")
+                       + U (" », ") + juce::String (clipsEmpty) + U (" événement sans, ") + juce::String (clipsFull) + U (" avec"));
+
+                prefs::file().setValue ("bpm", 97.0);
+                mc->newProject();
+                const double bpm = mc->getEdit()->tempoSequence.getTempos()[0]->getBpm();
+                prefs::file().removeValue ("bpm");
+                SettingsPanel settings (*mc);
+                pump (150);
+                snapshot (settings, dir.getChildFile ("40-parametres-general.png"));
+                settings.showTab (4); pump (150);
+                snapshot (settings, dir.getChildFile ("41-parametres-modeles.png"));
+                settings.showTab (3); pump (150);
+                snapshot (settings, dir.getChildFile ("42-parametres-plugins.png"));
+                check (std::abs (bpm - 97.0) < 0.01 && SettingsPanel::tabNames().size() == 5 && settings.currentTab() == 3,
+                       U ("paramètres : tempo des nouveaux projets appliqué (") + juce::String (bpm, 0) + U (" BPM), 5 onglets"));
+            }
             mc->newProjectFromTemplate (2);
             const auto prod = names();
             int instruments = 0;
@@ -2240,6 +2278,57 @@ private:
                     check (std::abs (organHz - 440.0) < 0.5 && std::abs (bestHz - 440.0) < 1.5,
                            U ("justesse : La 440 Hz → orgue ") + juce::String (organHz, 2) + U (" Hz, piano ") + juce::String (bestHz, 2) + " Hz");
 
+
+
+                    // Essai du son depuis la fenêtre : une note jouée au clavier de la fenêtre fait sonner l'instrument.
+                    {
+                        auto probe = ed.getPluginCache().createNewPlugin (ondefx::SynthPlugin::xmlTypeName, {});
+                        auto* ps = dynamic_cast<ondefx::SynthPlugin*> (probe.get());
+                        ps->applyPreset (*ondefx::SynthPlugin::findPreset (U ("Guitare folk")));
+                        ps->initialise ({ te::TimePosition(), 48000.0, 512 });
+                        ps->auditionNote (64, 0.8f);
+                        juce::AudioBuffer<float> ab (2, 512 * 20);
+                        for (int s = 0; s < ab.getNumSamples(); s += 512)
+                        {
+                            te::PluginRenderContext rc (&ab, s, 512, nullptr, 0.0, {}, true, false, false, false);
+                            ps->applyToBuffer (rc);
+                        }
+                        const float pk = ab.getMagnitude (0, 0, ab.getNumSamples());
+                        check (pk > 0.01f && pk < 1.0f, U ("essai du son depuis la fenêtre de l'instrument : crête ") + juce::String (juce::Decibels::gainToDecibels (pk), 1) + " dBFS");
+                    }
+
+                    // Cordes pincées (modèle physique) : justesse du grave de la 8 cordes à l'aigu, la corde résonne puis s'éteint.
+                    {
+                        auto fundamental = [] (const juce::AudioBuffer<float>& b, double target)
+                        {
+                            double best = 0, bestMag = 0;
+                            for (double hzv = target * 0.97; hzv <= target * 1.03; hzv += target * 0.0003)
+                            {
+                                const double w = juce::MathConstants<double>::twoPi * hzv / 48000.0, coeff = 2.0 * std::cos (w);
+                                double q1 = 0, q2 = 0;
+                                for (int i = 4800; i < 4800 + 48000 && i < b.getNumSamples(); ++i) { const double q0 = coeff * q1 - q2 + b.getSample (0, i); q2 = q1; q1 = q0; }
+                                const double mag = q1 * q1 + q2 * q2 - q1 * q2 * coeff;
+                                if (mag > bestMag) { bestMag = mag; best = hzv; }
+                            }
+                            return best;
+                        };
+                        juce::String report; bool inTune = true, rings = true;
+                        for (auto [presetName, note] : { std::pair<const char*, int> { "Guitare classique (nylon)", 45 }, { "Guitare 8 cordes (djent)", 30 },
+                                                         { "Guitare folk", 64 }, { "Basse électrique (doigts)", 28 }, { "Harpe", 81 } })
+                        {
+                            LibraryPanel::applyToTrack (c4, st, *ondefx::SynthPlugin::findPreset (U (presetName)));
+                            setNotes ({ note }, 6.0);
+                            const auto gb = renderSynth (U ("corde-") + juce::String (note));
+                            const double target = 440.0 * std::pow (2.0, (note - 69) / 12.0), hz = fundamental (gb, target);
+                            const double cents = 1200.0 * std::log2 (juce::jmax (1.0, hz) / target);
+                            const float early = gb.getRMSLevel (0, 4800, 9600), late = gb.getRMSLevel (0, 96000, 9600);
+                            inTune = inTune && std::abs (cents) < 6.0;
+                            rings = rings && early > 0.003f && late < early;
+                            report << U (presetName) << " " << juce::String (hz, 2) << " Hz (" << (cents >= 0 ? "+" : "") << juce::String (cents, 1) << " ct) ; ";
+                        }
+                        check (inTune && rings, U ("cordes pincées : ") + report + (rings ? U ("chaque corde résonne puis s'éteint") : U ("décroissance anormale")));
+                    }
+
                     // Batterie : grosse caisse grave, charleston aiguë (centre de gravité du spectre).
                     LibraryPanel::applyToTrack (c4, st, *ondefx::SynthPlugin::findPreset ("Batterie acoustique"));
                     auto brightness = [] (const juce::AudioBuffer<float>& b)
@@ -2298,6 +2387,11 @@ private:
 
                     // Fenêtres : Onde Synth et bibliothèque.
                     if (auto e = ondefx::createEditor (*synth)) { pump (200); snapshot (*e, dir.getChildFile ("18-onde-synth.png")); }
+                    for (auto [presetName, file] : { std::pair<const char*, const char*> { "Guitare folk 12 cordes", "18b-onde-synth-cordes.png" }, { "Batterie acoustique", "18c-onde-synth-batterie.png" }, { "Piano de concert", "18d-onde-synth-piano.png" } })
+                    {
+                        LibraryPanel::applyToTrack (c4, st, *ondefx::SynthPlugin::findPreset (U (presetName)));
+                        if (auto e = ondefx::createEditor (*synth)) { pump (200); snapshot (*e, dir.getChildFile (file)); }
+                    }
                     c4.selectTrack (st);
                     c4.perform ("midi.library");
                     pump (400);
@@ -2346,6 +2440,34 @@ private:
                        + U (" dB à +24 dB ; harmonique 2 : douce ") + juce::String (juce::jmax (-120.0, h2soft), 0) + U (" dB, lampe ") + juce::String (h2tube, 1) + U (" dB ; crête ") + juce::String (peakHot, 1) + " dBFS");
                 if (auto e = ondefx::createEditor (*sat)) { pump (200); snapshot (*e, dir.getChildFile ("20-onde-saturation.png")); }
                 satPtr->deleteFromParent();
+
+                // Onde Modulation : chaque effet modifie le son sans le faire exploser (flanger à forte réinjection compris).
+                {
+                    auto modPtr = addFx (ondefx::ModulationPlugin::xmlTypeName);
+                    auto* mod = dynamic_cast<ondefx::ModulationPlugin*> (modPtr.get());
+                    mod->param ("mix")->setParameter (0.0f, juce::sendNotification);
+                    const auto dry = renderTrack ("modulation-sec");
+                    const float dryPk = peakDb (dry);
+                    juce::String report; bool allOk = true;
+                    for (int m = 0; m < 5; ++m)
+                    {
+                        mod->param ("mode")->setParameter ((float) m, juce::sendNotification);
+                        mod->param ("mix")->setParameter (m == 4 ? 100.0f : 50.0f, juce::sendNotification);
+                        mod->param ("feedback")->setParameter (m == 2 ? 90.0f : m == 3 ? 60.0f : 0.0f, juce::sendNotification);
+                        mod->param ("depth")->setParameter (70.0f, juce::sendNotification);
+                        const auto wet = renderTrack ((juce::String ("modulation-") + juce::String (m)).toRawUTF8());
+                        double diff = 0; bool finite = true;
+                        for (int i = 0; i < juce::jmin (wet.getNumSamples(), dry.getNumSamples()); ++i)
+                        { const float a = wet.getSample (0, i); finite = finite && std::isfinite (a); diff = std::max (diff, (double) std::abs (a - dry.getSample (0, i))); }
+                        const float pk = peakDb (wet) - dryPk;
+                        const bool ok = finite && diff > 0.01 && pk < 7.0f && pk > -15.0f;
+                        allOk = allOk && ok;
+                        report << juce::String::fromUTF8 (ondefx::ModulationPlugin::modeNames[m]) << " " << (pk >= 0 ? "+" : "") << juce::String (pk, 1) << " dB" << (ok ? "" : " (!)") << " ; ";
+                    }
+                    check (allOk, U ("Onde Modulation : ") + report + U ("son modifié, crête maîtrisée"));
+                    if (auto e = ondefx::createEditor (*mod)) { pump (200); snapshot (*e, dir.getChildFile ("20b-onde-modulation.png")); }
+                    modPtr->deleteFromParent();
+                }
 
                 // Écho et espace sur un clic isolé à 0,5 s.
                 const auto click = dir.getChildFile ("clic.wav");
@@ -2781,7 +2903,7 @@ private:
                     const auto b = readAll (f, r);
                     sounds = juce::Decibels::gainToDecibels (b.getRMSLevel (0, 0, juce::jmin (b.getNumSamples(), 96000))) > -45.0f;
                     tab->autoFingering();
-                    tab->setTuning (4);                          // basse 4 cordes : Sol grave (43) = corde de Sol à vide
+                    tab->setTuning (6);                          // basse 4 cordes : Sol grave (43) = corde de Sol à vide
                     bass = tab->placeOf (*n1) == std::make_pair (0, 0);
                     tab->setTuning (0);
                 }

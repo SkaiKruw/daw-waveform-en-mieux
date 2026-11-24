@@ -722,5 +722,6 @@ namespace ondefx
         pm.createBuiltInType<EchoPlugin>();
         pm.createBuiltInType<SpacePlugin>();
         pm.createBuiltInType<MasterMeterPlugin>();
+        pm.createBuiltInType<ModulationPlugin>();
     }
 }

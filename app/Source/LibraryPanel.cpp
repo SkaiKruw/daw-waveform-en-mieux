@@ -11,7 +11,7 @@ namespace
     {
         for (auto& [id, v] : p.values)
             if (juce::String (id) == "engine")
-                return juce::String::fromUTF8 (ondefx::SynthPlugin::engineNames[juce::jlimit (0, 3, juce::roundToInt (v))]);
+                return juce::String::fromUTF8 (ondefx::SynthPlugin::engineNames[juce::jlimit (0, ondefx::SynthPlugin::numEngines - 1, juce::roundToInt (v))]);
         return "Analogique";
     }
 }

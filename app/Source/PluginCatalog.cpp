@@ -39,8 +39,7 @@ juce::Array<PluginEntry> PluginCatalog::getBuiltIns (bool instruments) const
         add ("Onde Saturation (douce, lampe, bande, fuzz)", ondefx::SaturationPlugin::xmlTypeName, false); r.getReference (r.size() - 1).manufacturer = "Onde";
         add ("Onde Écho (délai calé sur le tempo)", ondefx::EchoPlugin::xmlTypeName, false);              r.getReference (r.size() - 1).manufacturer = "Onde";
         add ("Onde Espace (réverbération)", ondefx::SpacePlugin::xmlTypeName, false);                    r.getReference (r.size() - 1).manufacturer = "Onde";
-        add ("Chorus (Tracktion)", te::ChorusPlugin::xmlTypeName, false);
-        add ("Phaser (Tracktion)", te::PhaserPlugin::xmlTypeName, false);
+        add ("Onde Modulation (chorus, ensemble, flanger, phaser, vibrato)", ondefx::ModulationPlugin::xmlTypeName, false); r.getReference (r.size() - 1).manufacturer = "Onde";
         add ("Passe-bas (Tracktion)", te::LowPassPlugin::xmlTypeName, false);
     }
     return r;

@@ -61,6 +61,33 @@ namespace ondefx
     };
 
     //==============================================================================
+    // Modulation : chorus, ensemble (3 voix, effet « cordes »), flanger, phaser 6 étages, vibrato. Oscillateurs décalés
+    // entre gauche et droite (largeur), réinjection pour le flanger et le phaser.
+    class ModulationPlugin  : public OndeEffect
+    {
+    public:
+        explicit ModulationPlugin (te::PluginCreationInfo);
+        static const char* xmlTypeName;
+        static const char* getPluginName()           { return "Onde Modulation"; }
+        juce::String getName() const override        { return "Onde Modulation"; }
+        juce::String getPluginType() override        { return xmlTypeName; }
+        juce::String getShortName (int) override     { return "Modul."; }
+        void initialise (const te::PluginInitialisationInfo&) override;
+        void deinitialise() override {}
+        void reset() override;
+        void applyToBuffer (const te::PluginRenderContext&) override;
+        static constexpr const char* modeNames[5] = { "Chorus", "Ensemble", "Flanger", "Phaser", "Vibrato" };
+        std::atomic<float> lfoPhase { 0 };       // pour l'affichage
+        // Retard (ms) ou fréquence du phaser (Hz) d'une voix, pour une phase d'oscillateur donnée (affichage et traitement).
+        float delayMsAt (int mode, double phase) const;
+    private:
+        double rate = 48000.0, phase = 0, phase2 = 0;
+        std::vector<float> line[2];
+        int writePos = 0, mask = 0;
+        float fbState[2] {}, ap[2][6] {}, wetLP[2] {};
+    };
+
+    //==============================================================================
     // Espace : réverbération à réseau de 8 lignes à retard (matrice de Hadamard), lignes légèrement modulées
     // (queue sans « métal »), diffusion d'entrée, amortissement des aigus, pré-délai, temps de réverbération réglable.
     class SpacePlugin  : public OndeEffect

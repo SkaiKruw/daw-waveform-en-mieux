@@ -1,5 +1,6 @@
 #include "MainComponent.h"
 #include "OndeFx2.h"
+#include "Preferences.h"
 #include "ParamControls.h"
 #include "DemoContent.h"
 #include "OndeSynth.h"
@@ -141,7 +142,7 @@ MainComponent::~MainComponent()
 
 juce::File MainComponent::projectsFolder()
 {
-    return juce::File::getSpecialLocation (juce::File::userDocumentsDirectory).getChildFile ("Onde");
+    return prefs::projectsFolder();
 }
 
 juce::File MainComponent::recoveryFile()
@@ -315,6 +316,8 @@ void MainComponent::registerActions()
     ctx.addAction ("file.saveas", U ("Enregistrer sous…"), "Fichier", KP ('s', ctrl | shift, 0), [this] { saveProjectAs(); });
     ctx.addAction ("file.import", U ("Importer › Fichier audio…"), "Fichier", KP ('i', ctrl | shift, 0), [this] { importAudio(); })->separatorBefore = true;
     ctx.addAction ("file.export", U ("Exporter › Mixage audio (WAV, FLAC, MP3, OGG)…"), "Fichier", KP ('e', ctrl | shift, 0), [this] { exportWav(); });
+    ctx.addAction ("file.saveTemplate", U ("Enregistrer comme modèle…"), "Fichier", {}, [this] { askSaveAsTemplate(); });
+    ctx.addAction ("file.preferences", U ("Paramètres…"), "Fichier", KP (',', ctrl, 0), [this] { showPreferences (0); })->separatorBefore = true;
     ctx.addAction ("file.quit", "Quitter", "Fichier", KP ('q', ctrl, 0), [] { juce::JUCEApplication::getInstance()->systemRequestedQuit(); })->separatorBefore = true;
 
     // --- Édition
@@ -697,7 +700,7 @@ void MainComponent::registerActions()
     {
         if (lowerVisible && lowerTab == 1) setZone (1, false); else showView (1);
     });
-    ctx.addAction ("file.audio", U ("Configuration du studio (carte son)…"), "Studio", KP (',', ctrl, 0), [this] { showAudioSettings(); })->separatorBefore = true;
+    ctx.addAction ("file.audio", U ("Configuration du studio (carte son, MIDI)…"), "Studio", {}, [this] { showPreferences (1); })->separatorBefore = true;
     ctx.addAction ("studio.remote", U ("Télécommande (téléphone)…"), "Studio", {}, [this]
     {
         if (remoteWindow != nullptr) { remoteWindow->toFront (true); return; }
@@ -1120,7 +1123,7 @@ void MainComponent::newProject()
 {
     auto file = juce::File::getSpecialLocation (juce::File::tempDirectory).getChildFile ("onde-sans-titre-" + juce::String (juce::Random::getSystemRandom().nextInt (1000000)) + ".onde");
     auto e = te::createEmptyEdit (engine, file);
-    e->tempoSequence.getTempos()[0]->setBpm (120.0);
+    e->tempoSequence.getTempos()[0]->setBpm (prefs::newProjectBpm());
     setEdit (std::move (e), file, true);
     ctx.addInstrumentTrack();
     ctx.addAudioTrack();
@@ -1137,7 +1140,7 @@ void MainComponent::newProjectFromTemplate (int kind)
     // de piste détruite).
     auto file = juce::File::getSpecialLocation (juce::File::tempDirectory).getChildFile ("onde-sans-titre-" + juce::String (juce::Random::getSystemRandom().nextInt (1000000)) + ".onde");
     auto e = te::createEmptyEdit (engine, file);
-    e->tempoSequence.getTempos()[0]->setBpm (120.0);
+    e->tempoSequence.getTempos()[0]->setBpm (prefs::newProjectBpm());
     // Tracktion crée une piste par défaut : retirée avant que les vues ne s'attachent au projet.
     for (auto* t : te::getAudioTracks (*e)) e->deleteTrack (t);
     setEdit (std::move (e), file, true);
@@ -1420,7 +1423,7 @@ void MainComponent::timerCallback()
         }
         else playWanted = false;
     }
-    if ((juce::Time::getCurrentTime() - lastAutosave).inSeconds() >= 15.0) autosave();
+    if (const int every = prefs::autosaveSeconds(); every > 0 && (juce::Time::getCurrentTime() - lastAutosave).inSeconds() >= every) autosave();
     if (status.isNotEmpty() && (juce::Time::getCurrentTime() - statusTime).inSeconds() > 8.0) status = {};
     // Barre d'état : redessinée quand le message change, sinon deux fois par seconde (charge CPU).
     if (status != paintedStatus || ++statusTick % 12 == 0) { paintedStatus = status; repaint (0, getHeight() - statusH, getWidth(), statusH); }
@@ -1549,4 +1552,98 @@ void MainComponent::markCleanWhenSettled()
             e->resetChangedStatus();
             if (safe->onTitleChanged) safe->onTitleChanged (safe->projectName());
         });
+}
+
+//==============================================================================
+// Paramètres et modèles personnels.
+void MainComponent::showPreferences (int tab)
+{
+    if (preferencesWindow != nullptr)
+    {
+        if (auto* p = dynamic_cast<SettingsPanel*> (preferencesWindow->getContentComponent())) p->showTab (tab);
+        preferencesWindow->toFront (true);
+        return;
+    }
+    preferencesWindow = SettingsPanel::show (*this, tab);
+}
+
+juce::File MainComponent::templatesFolder()
+{
+    return juce::File::getSpecialLocation (juce::File::userApplicationDataDirectory).getChildFile ("Onde").getChildFile (testMode ? U ("Modèles-tests") : U ("Modèles"));
+}
+
+juce::Array<juce::File> MainComponent::userTemplates()
+{
+    juce::Array<juce::File> list;
+    if (templatesFolder().isDirectory())
+        for (const auto& entry : juce::RangedDirectoryIterator (templatesFolder(), false, "*.onde", juce::File::findFiles))
+            list.add (entry.getFile());
+    std::sort (list.begin(), list.end(), [] (const juce::File& a, const juce::File& b) { return a.getFileName().compareNatural (b.getFileName()) < 0; });
+    return list;
+}
+
+bool MainComponent::saveAsTemplate (const juce::String& name, bool keepEvents)
+{
+    if (! edit || name.trim().isEmpty()) return false;
+    edit->flushState();
+    auto tree = edit->state.createCopy();
+    if (! keepEvents)
+    {
+        // Les événements (audio, MIDI, repères) et les paroles sont propres au morceau : retirés.
+        std::function<void (juce::ValueTree)> strip = [&] (juce::ValueTree v)
+        {
+            for (int i = v.getNumChildren(); --i >= 0;)
+            {
+                auto c = v.getChild (i);
+                const auto type = c.getType().toString();
+                if (type.endsWith ("CLIP") || type == "ONDELYRICS") v.removeChild (i, nullptr);
+                else strip (c);
+            }
+        };
+        strip (tree);
+    }
+    tree.removeProperty (te::IDs::projectID, nullptr);      // chaque projet créé depuis le modèle aura le sien
+    templatesFolder().createDirectory();
+    const auto f = templatesFolder().getChildFile (juce::File::createLegalFileName (name.trim()) + ".onde");
+    auto xml = tree.createXml();
+    const bool ok = xml != nullptr && xml->writeTo (f);
+    setStatus (ok ? U ("Modèle « ") + name.trim() + U (" » enregistré") : U ("Impossible d'enregistrer le modèle"));
+    return ok;
+}
+
+void MainComponent::askSaveAsTemplate (std::function<void()> done)
+{
+    if (! edit) return;
+    auto* w = new juce::AlertWindow (U ("Enregistrer comme modèle"),
+                                     U ("Le projet devient un point de départ réutilisable : pistes, sons, effets, routage, tempo. "
+                                        "Il apparaîtra dans l'écran d'accueil (Mes modèles)."),
+                                     juce::MessageBoxIconType::NoIcon);
+    w->addTextEditor ("name", untitled ? U ("Mon modèle") : projectName(), U ("Nom du modèle"));
+    w->addButton (U ("Enregistrer"), 1, juce::KeyPress (juce::KeyPress::returnKey));
+    w->addButton (U ("Avec les événements"), 2);
+    w->addButton (U ("Annuler"), 0, juce::KeyPress (juce::KeyPress::escapeKey));
+    w->enterModalState (true, juce::ModalCallbackFunction::create ([this, w, done] (int r)
+    {
+        std::unique_ptr<juce::AlertWindow> owner (w);
+        if (r > 0 && saveAsTemplate (w->getTextEditorContents ("name"), r == 2) && done) done();
+    }), false);
+}
+
+bool MainComponent::newProjectFromUserTemplate (const juce::File& f)
+{
+    auto state = te::loadEditFromFile (engine, f, te::ProjectItemID{});
+    if (! state.isValid()) { setStatus (U ("Modèle illisible : ") + f.getFileName()); return false; }
+    auto file = juce::File::getSpecialLocation (juce::File::tempDirectory).getChildFile ("onde-sans-titre-" + juce::String (juce::Random::getSystemRandom().nextInt (1000000)) + ".onde");
+    auto e = te::Edit::createEdit (te::Edit::Options { engine, state, te::ProjectItemID::createNewID (te::ProjectID{}), te::Edit::forEditing, nullptr,
+                                                       te::Edit::getDefaultNumUndoLevels(), [file] { return file; }, makeResolver ([file] { return file; }) });
+    if (e == nullptr) return false;
+    setEdit (std::move (e), file, true);
+    if (! edit) return false;
+    edit->getUndoManager().clearUndoHistory();
+    edit->resetChangedStatus();
+    markCleanWhenSettled();
+    if (auto* first = te::getAudioTracks (*edit).getFirst()) ctx.selectTrack (first);
+    ctx.changed();
+    setStatus (U ("Nouveau projet depuis le modèle « ") + f.getFileNameWithoutExtension() + U (" »"));
+    return true;
 }

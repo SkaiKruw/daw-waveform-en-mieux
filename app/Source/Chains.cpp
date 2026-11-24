@@ -41,7 +41,9 @@ namespace chains
                                   { "Tenue", { { SYNTH, "d", 0.5f } } }, { "Relâchement", { { SYNTH, "r", 0.5f } } } };
                 case 2:  return { { "Brillance", { { SYNTH, "bright", 0.8f } } }, { "Dureté", { { SYNTH, "hard", 0.8f } } },
                                   { "Stéréo", { { SYNTH, "width", 0.8f } } } };
-                default: return { { "Accord", { { SYNTH, "dtune", 0.5f } } }, { "Résonance", { { SYNTH, "ddecay", 0.5f } } } };
+                case 3:  return { { "Accord", { { SYNTH, "dtune", 0.5f } } }, { "Résonance", { { SYNTH, "ddecay", 0.5f } } } };
+                default: return { { "Brillance", { { SYNTH, "bright", 0.6f } } }, { "Attaque", { { SYNTH, "pick", 0.6f } } },
+                                  { "Résonance", { { SYNTH, "ring", 0.4f } } }, { "Étouffement", { { SYNTH, "mute", 0.8f } } } };
             }
         }
 
