@@ -128,6 +128,9 @@ namespace sfz
             r.pan = num (o, "pan", 0);
             r.ampVeltrack = num (o, "amp_veltrack", 100);
             r.pitchKeytrack = num (o, "pitch_keytrack", 100);
+            r.delay = juce::jmax (0.0f, num (o, "delay", 0));
+            for (auto& [k, v] : o) if (k.startsWith ("amp_velcurve_")) r.velCurve.push_back ({ k.substring (13).getIntValue(), v.getFloatValue() });
+            std::sort (r.velCurve.begin(), r.velCurve.end());
             r.seqLength = juce::jmax (1, (int) num (o, "seq_length", 1));
             r.seqPosition = juce::jmax (1, (int) num (o, "seq_position", 1));
             r.lorand = num (o, "lorand", 0); r.hirand = num (o, "hirand", 1);
@@ -280,7 +283,8 @@ namespace ondefx
         float gainL = 1, gainR = 1, env = 0, envTarget = 1;
         int stage = 0;                                   // 0 attaque, 1 maintien, 2 décroissance, 3 tenue, 4 relâchement
         float attackInc = 1, decayCoef = 0, sustain = 1, releaseCoef = 0.99f, holdLeft = 0;
-        juce::uint32 age = 0;
+        juce::uint32 age = 0, event = 0;
+        int delayLeft = 0;
     };
 
     const char* SamplerPlugin::xmlTypeName = "ondeSampler";
@@ -388,17 +392,29 @@ namespace ondefx
         if (it == inst->samples.end() || it->second->data.getNumSamples() == 0) return;
         // Groupes exclusifs (charleston fermée qui coupe l'ouverte…).
         if (r.group != 0)
-            for (auto& v : voices) if (v->active && v->region != nullptr && v->region->offBy == r.group) { v->releasing = true; v->stage = 4; v->releaseCoef = std::exp (-1.0f / (0.01f * (float) rate)); }
+            for (auto& v : voices) if (v->active && v->region != nullptr && v->region->offBy == r.group && v->event != currentEvent) { v->releasing = true; v->stage = 4; v->releaseCoef = std::exp (-1.0f / (0.01f * (float) rate)); }
         Voice* v = nullptr;
         for (auto& x : voices) if (! x->active) { v = x.get(); break; }
         if (v == nullptr) { v = voices[0].get(); for (auto& x : voices) if ((x->releasing && ! v->releasing) || (x->releasing == v->releasing && x->age < v->age)) v = x.get(); }
         const float vel = velocity / 127.0f, velsens = value ("velsens");
         const float vt = r.ampVeltrack / 100.0f * velsens;
-        const float velGain = (1.0f - vt) + vt * vel * vel;
+        float velGain = (1.0f - vt) + vt * vel * vel;
+        if (! r.velCurve.empty())
+        {
+            // Courbe donnée par points (amp_velcurve_N), interpolée ; 0 -> 0 et 127 -> 1 si absents.
+            std::vector<std::pair<int, float>> pts = r.velCurve;
+            if (pts.front().first > 0) pts.insert (pts.begin(), { 0, 0.0f });
+            if (pts.back().first < 127) pts.push_back ({ 127, 1.0f });
+            for (size_t k = 1; k < pts.size(); ++k)
+                if (velocity <= pts[k].first) { const float f = (float) (velocity - pts[k - 1].first) / (float) juce::jmax (1, pts[k].first - pts[k - 1].first); velGain = juce::jmap (f, pts[k - 1].second, pts[k].second); break; }
+            velGain = (1.0f - velsens) + velsens * velGain;
+        }
         const float gain = juce::Decibels::decibelsToGain (r.volume) * velGain * gainScale;
         const float pan = juce::jlimit (-1.0f, 1.0f, r.pan / 100.0f);
         v->region = &r; v->sample = it->second; v->note = note;
         v->active = true; v->held = true; v->releasing = false; v->age = ++voiceCounter;
+        v->event = currentEvent;
+        v->delayLeft = (int) (r.delay * rate);
         v->pos = (double) juce::jlimit<juce::int64> (0, (juce::int64) v->sample->data.getNumSamples() - 1, r.offset);
         const double semis = (note - r.keycenter) * (r.pitchKeytrack / 100.0) + r.transpose + (r.tune + value ("tune")) / 100.0;
         v->inc = std::pow (2.0, semis / 12.0) * v->sample->rate / rate;
@@ -425,6 +441,7 @@ namespace ondefx
         noteVelocity[(size_t) note] = velocity;
         noteHeld[(size_t) note] = true;
         const int counter = ++seqCounter[(size_t) note];
+        ++currentEvent;                                    // zones d'une même touche : jamais coupées entre elles
         const float rnd = random.nextFloat();
         const int sw = currentSwitch.load();
         for (auto& r : inst->regions)
@@ -463,6 +480,8 @@ namespace ondefx
         {
             auto& v = *vp;
             if (! v.active) continue;
+            int skip = 0;
+            if (v.delayLeft > 0) { skip = juce::jmin (n, v.delayLeft); v.delayLeft -= skip; if (skip >= n) continue; }
             const auto& data = v.sample->data;
             const int len = data.getNumSamples();
             const float* d0 = data.getReadPointer (0);
@@ -471,7 +490,7 @@ namespace ondefx
             const juce::int64 endPos = r.end > 0 ? juce::jmin<juce::int64> (r.end, len - 1) : len - 1;
             const bool looping = r.loop && r.loopEnd > r.loopStart && r.loopEnd < len;
             const double bend = std::pow (2.0, pitchBend * 2.0 / 12.0);
-            for (int i = 0; i < n; ++i)
+            for (int i = skip; i < n; ++i)
             {
                 // Enveloppe.
                 switch (v.stage)

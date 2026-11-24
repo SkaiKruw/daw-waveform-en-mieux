@@ -19,6 +19,8 @@ namespace sfz
         bool releaseTrigger = false, oneShot = false, loop = false;
         juce::int64 offset = 0, end = -1, loopStart = 0, loopEnd = -1;
         float pitchKeytrack = 100.0f;
+        float delay = 0.0f;                               // départ retardé (accords grattés, bruits)
+        std::vector<std::pair<int, float>> velCurve;      // amp_velcurve_N : niveau selon la vélocité
     };
 
     struct Sample { juce::AudioBuffer<float> data; double rate = 44100.0; };
@@ -101,6 +103,7 @@ namespace ondefx
         bool sustainDown = false;
         float pitchBend = 0.0f, lpState[2] {};
         juce::uint32 voiceCounter = 0;
+        juce::uint32 currentEvent = 0;
         juce::Random random;
         juce::AbstractFifo auditionFifo { 64 };
         std::array<std::pair<int, float>, 64> auditionQueue {};

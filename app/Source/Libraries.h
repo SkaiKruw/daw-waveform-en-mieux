@@ -22,6 +22,10 @@ namespace libraries
     juce::String downloadUrl (const Info&);
     // Installation d'une archive zip déjà téléchargée (aussi pour les tests) : décompressée dans le dossier de la bibliothèque.
     juce::Result installFromZip (const Info&, const juce::File& zip, std::function<void (float)> progress = nullptr);
+    // Téléchargement complet (archive du dépôt) puis installation ; progress (étape 0 téléchargement, 1 installation, fraction).
+    // shouldStop : annulation. Appelé hors du fil de l'interface.
+    juce::Result downloadAndInstall (const Info&, std::function<void (int stage, float fraction, juce::int64 bytes)> progress, std::function<bool()> shouldStop = nullptr);
+    const Info* find (const juce::String& id);
 }
 
 class LibrariesPanel  : public juce::Component, private juce::Timer

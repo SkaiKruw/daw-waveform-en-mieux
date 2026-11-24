@@ -157,6 +157,96 @@ namespace
         return 10.0 * std::log10 ((a + 1e-12) / (b + 1e-12));
     }
 
+    // Bibliothèques d'instruments : installe (télécharge si besoin) puis essaie chaque instrument SFZ avec Onde
+    // Échantillonneur : zones lues, échantillons trouvés, notes jouées sur toute la tessiture (son, pas de saturation).
+    //   Onde --library <id ou tout> [--sans-telecharger]
+    int runLibraryTest (te::Engine& engine, const juce::StringArray& args)
+    {
+        std::printf ("\nBibliothèques d'instruments\n\n");
+        juce::Array<const libraries::Info*> todo;
+        if (args[1] == "tout") for (auto& i : libraries::catalog()) todo.add (&i);
+        else if (auto* i = libraries::find (args[1])) todo.add (i);
+        if (todo.isEmpty()) { std::printf ("  bibliothèque inconnue : %s\n", args[1].toRawUTF8()); return 2; }
+        auto edit = te::Edit::createSingleTrackEdit (engine);
+        for (auto* info : todo)
+        {
+            if (! libraries::isInstalled (*info))
+            {
+                if (args.contains ("--sans-telecharger")) { std::printf ("  info   : %s non installée\n", info->id); continue; }
+                std::printf ("  info   : téléchargement de %s (%d Mo)…\n", info->name, info->sizeMb);
+                std::fflush (stdout);
+                int lastPct = -10;
+                const auto r = libraries::downloadAndInstall (*info, [&] (int stage, float f, juce::int64 bytes)
+                {
+                    const int pct = juce::roundToInt (f * 100.0f);
+                    if (pct >= lastPct + 10 || (stage == 1 && lastPct >= 100)) { lastPct = stage == 1 && lastPct >= 100 ? -10 : pct; std::printf ("           %s %d %% %s\n", stage == 0 ? "téléchargé" : "installé", pct, stage == 0 ? (juce::String (bytes / (1024 * 1024)) + " Mo").toRawUTF8() : ""); std::fflush (stdout); }
+                });
+                check (r.wasOk(), juce::String::fromUTF8 (info->name) + U (" installée ") + r.getErrorMessage());
+                if (r.failed()) continue;
+            }
+            const auto instruments = ondefx::findInstruments (libraries::folderFor (*info));
+            int playable = 0, missingTotal = 0;
+            juce::StringArray problems;
+            for (auto& f : instruments)
+            {
+                auto plugin = edit->getPluginCache().createNewPlugin (ondefx::SamplerPlugin::xmlTypeName, {});
+                auto* s = dynamic_cast<ondefx::SamplerPlugin*> (plugin.get());
+                s->loadInstrument (f);
+                juce::MessageManager::getInstance()->runDispatchLoopUntil (20);
+                s->waitUntilLoaded (300000);
+                auto inst = s->getInstrument();
+                if (inst == nullptr || inst->regions.empty()) { problems.add (f.getFileName() + " : " + (inst ? inst->error : juce::String ("non chargé"))); continue; }
+                int missing = 0;
+                for (auto& [path, smp] : inst->samples) if (smp->data.getNumSamples() == 0) ++missing;
+                missingTotal += missing;
+                // Notes sur la tessiture, forte et douce ; une touche d'articulation par défaut si l'instrument en a.
+                int lo = 127, hi = 0; for (auto& r : inst->regions) if (! r.releaseTrigger) { lo = std::min (lo, r.lokey); hi = std::max (hi, r.hikey); }
+                if (juce::SystemStats::getEnvironmentVariable ("ONDE_SFZ_DEBUG", {}).isNotEmpty())
+                {
+                    const int dn = 49, dv = 50; int cand = 0, sw = 0, swDef = inst->swDefault;
+                    for (auto& r : inst->regions) if (! r.releaseTrigger && dn >= r.lokey && dn <= r.hikey && dv >= r.lovel && dv <= r.hivel) { ++cand; if (r.swLast < 0 || r.swLast == swDef) ++sw; }
+                    std::printf ("  debug  : note %d vel %d : %d zones, %d avec l'articulation %d ; premier lovel %d hivel %d lokey %d hikey %d\n", dn, dv, cand, sw, swDef,
+                                 inst->regions[1].lovel, inst->regions[1].hivel, inst->regions[1].lokey, inst->regions[1].hikey);
+                }
+                s->initialise ({ te::TimePosition(), 48000.0, 512 });
+                juce::AudioBuffer<float> b (2, 48000 * 3);
+                b.clear();
+                std::vector<std::pair<int, int>> notes;
+                for (int k = 0; k < 5; ++k) { const int note = lo + (hi - lo) * k / 4; if (inst->hasNote (note)) notes.push_back ({ note, k % 2 ? 50 : 110 }); }
+                for (int pos = 0; pos < b.getNumSamples(); pos += 512)
+                {
+                    te::MidiMessageArray midi;
+                    // Une note toutes les 0,5 s, relâchée 0,4 s plus tard.
+                    for (int k = 0; k < (int) notes.size(); ++k)
+                    {
+                        const int on = k * 24000, off = on + 19200;
+                        if (on >= pos && on < pos + 512) midi.addMidiMessage (juce::MidiMessage::noteOn (1, notes[(size_t) k].first, (juce::uint8) notes[(size_t) k].second), (on - pos) / 48000.0, {});
+                        if (off >= pos && off < pos + 512) midi.addMidiMessage (juce::MidiMessage::noteOff (1, notes[(size_t) k].first), (off - pos) / 48000.0, {});
+                    }
+                    te::PluginRenderContext rc (&b, pos, juce::jmin (512, b.getNumSamples() - pos), &midi, 0.0, {}, true, false, true, false);
+                    s->applyToBuffer (rc);
+                }
+                bool finite = true;
+                for (int c = 0; c < 2; ++c) for (int i = 0; i < b.getNumSamples(); ++i) finite = finite && std::isfinite (b.getSample (c, i));
+                const float rms = juce::Decibels::gainToDecibels (b.getRMSLevel (0, 0, b.getNumSamples())), peak = juce::Decibels::gainToDecibels (b.getMagnitude (0, b.getNumSamples()));
+                const bool ok = finite && rms > -60.0f && missing == 0;
+                if (ok) ++playable;
+                else problems.add (f.getFileName() + " : " + (missing > 0 ? juce::String (missing) + U (" échantillons manquants ") : juce::String())
+                                   + (rms <= -60.0f ? U ("silencieux ") : juce::String()) + (finite ? juce::String() : U ("valeurs invalides")));
+                std::printf ("  info   : %-48s %4d zones, %4d échantillons, %s à %s, %.1f dB RMS, crête %.1f dB%s\n", f.getFileNameWithoutExtension().toRawUTF8(),
+                             (int) inst->regions.size(), (int) inst->samples.size(), juce::MidiMessage::getMidiNoteName (lo, true, true, 4).toRawUTF8(),
+                             juce::MidiMessage::getMidiNoteName (hi, true, true, 4).toRawUTF8(), rms, peak, ok ? "" : "  <-- à revoir");
+                std::fflush (stdout);
+            }
+            check (! instruments.isEmpty() && playable == instruments.size(),
+                   juce::String::fromUTF8 (info->name) + " : " + juce::String (playable) + "/" + juce::String (instruments.size()) + U (" instruments jouables")
+                   + (problems.isEmpty() ? juce::String() : U (" ; à revoir : ") + problems.joinIntoString (" | ")));
+        }
+        EditContext::destroyEdit (edit);
+        std::printf ("\n%s\n", failures == 0 ? "BIBLIOTHEQUES OK" : "DES VERIFICATIONS ECHOUENT");
+        return failures == 0 ? 0 : 1;
+    }
+
     int runStemsTest (te::Engine& engine, EditContext& ctx, const juce::File& dir)
     {
         dir.createDirectory();
@@ -366,6 +456,11 @@ public:
             const int code = runRenderTest (*engine, juce::File::getCurrentWorkingDirectory().getChildFile (args[1].isEmpty() ? "rendu-test" : args[1].unquoted()));
             setApplicationReturnValue (code);
             quit();
+            return;
+        }
+        if (args[0] == "--library")
+        {
+            juce::MessageManager::callAsync ([this, args] { setApplicationReturnValue (runLibraryTest (*engine, args)); quit(); });
             return;
         }
         if (args[0] == "--stems-test")

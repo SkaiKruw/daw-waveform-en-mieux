@@ -58,50 +58,79 @@ namespace libraries
         if (progress) progress (1.0f);
         return ondefx::findInstruments (dest).isEmpty() ? juce::Result::fail (juce::String::fromUTF8 ("aucun instrument SFZ dans cette archive")) : juce::Result::ok();
     }
+
+    const Info* find (const juce::String& id)
+    {
+        for (auto& i : catalog()) if (id == i.id) return &i;
+        return nullptr;
+    }
+
+    juce::Result downloadAndInstall (const Info& info, std::function<void (int, float, juce::int64)> progress, std::function<bool()> shouldStop)
+    {
+        const auto zip = juce::File::getSpecialLocation (juce::File::tempDirectory).getChildFile (juce::String ("onde-bibliotheque-") + info.id + ".zip");
+        zip.deleteFile();
+        int status = 0;
+        auto options = juce::URL::InputStreamOptions (juce::URL::ParameterHandling::inAddress)
+                           .withExtraHeaders ("User-Agent: Onde")
+                           .withConnectionTimeoutMs (20000)
+                           .withNumRedirectsToFollow (8)
+                           .withStatusCode (&status);
+        auto in = juce::URL (downloadUrl (info)).createInputStream (options);
+        if (in == nullptr) return juce::Result::fail (juce::String::fromUTF8 ("connexion impossible"));
+        if (status >= 400) return juce::Result::fail (juce::String::fromUTF8 ("le serveur a répondu ") + juce::String (status));
+        const juce::int64 expected = in->getTotalLength() > 0 ? in->getTotalLength() : (juce::int64) info.sizeMb * 1024 * 1024;
+        {
+            juce::FileOutputStream out (zip);
+            if (! out.openedOk()) return juce::Result::fail (juce::String::fromUTF8 ("écriture impossible : ") + zip.getFullPathName());
+            juce::HeapBlock<char> buffer (1 << 20);
+            juce::int64 total = 0;
+            for (;;)
+            {
+                if (shouldStop && shouldStop()) { out.flush(); zip.deleteFile(); return juce::Result::fail (juce::String::fromUTF8 ("annulé")); }
+                const int n = in->read (buffer, 1 << 20);
+                if (n <= 0) break;
+                if (! out.write (buffer, (size_t) n)) return juce::Result::fail (juce::String::fromUTF8 ("disque plein ?"));
+                total += n;
+                if (progress) progress (0, juce::jlimit (0.0f, 1.0f, (float) total / (float) juce::jmax<juce::int64> (1, expected)), total);
+            }
+            out.flush();
+            if (total < 1024) return juce::Result::fail (juce::String::fromUTF8 ("archive vide"));
+        }
+        const auto r = installFromZip (info, zip, [&] (float f) { if (progress) progress (1, f, 0); });
+        zip.deleteFile();
+        return r;
+    }
 }
 
 //==============================================================================
-// Téléchargement puis installation d'une bibliothèque, en arrière-plan.
-struct LibrariesPanel::Job  : public juce::URL::DownloadTaskListener
+// Téléchargement puis installation d'une bibliothèque, en arrière-plan (annulé si la fenêtre se ferme).
+struct LibrariesPanel::Job
 {
     enum State { idle, downloading, extracting, done, failed };
     const libraries::Info& info;
     std::atomic<int> state { idle };
     std::atomic<float> fraction { 0.0f };
     std::atomic<juce::int64> received { 0 }, total { 0 };
+    std::atomic<bool> cancel { false };
     juce::String error;
-    std::unique_ptr<juce::URL::DownloadTask> task;
     std::thread worker;
-    juce::File zip;
 
     explicit Job (const libraries::Info& i) : info (i) { if (libraries::isInstalled (i)) state = done; }
-    ~Job() override { task.reset(); if (worker.joinable()) worker.join(); }
+    ~Job() { cancel = true; if (worker.joinable()) worker.join(); }
 
     void start()
     {
-        error.clear();
-        zip = juce::File::getSpecialLocation (juce::File::tempDirectory).getChildFile (juce::String ("onde-bibliotheque-") + info.id + ".zip");
-        zip.deleteFile();
+        if (worker.joinable()) worker.join();
+        error.clear(); cancel = false;
         state = downloading; fraction = 0; received = 0; total = (juce::int64) info.sizeMb * 1024 * 1024;
-        auto options = juce::URL::DownloadTaskOptions().withListener (this).withExtraHeaders ("User-Agent: Onde");
-        task = juce::URL (libraries::downloadUrl (info)).downloadToFile (zip, options);
-        if (task == nullptr) { error = juce::String::fromUTF8 ("téléchargement impossible (connexion ?)"); state = failed; }
-    }
-    void progress (juce::URL::DownloadTask*, juce::int64 bytes, juce::int64 totalLength) override
-    {
-        received = bytes;
-        if (totalLength > 0) total = totalLength;
-        fraction = total > 0 ? juce::jlimit (0.0f, 1.0f, (float) bytes / (float) total.load()) : 0.0f;
-    }
-    void finished (juce::URL::DownloadTask* t, bool success) override
-    {
-        if (! success || t->hadError() || t->statusCode() >= 400) { error = juce::String::fromUTF8 ("téléchargement interrompu (code ") + juce::String (t->statusCode()) + ")"; state = failed; return; }
-        state = extracting; fraction = 0;
-        if (worker.joinable()) worker.detach();
         worker = std::thread ([this]
         {
-            const auto r = libraries::installFromZip (info, zip, [this] (float f) { fraction = f; });
-            zip.deleteFile();
+            const auto r = libraries::downloadAndInstall (info, [this] (int stage, float f, juce::int64 bytes)
+            {
+                state = stage == 0 ? downloading : extracting;
+                fraction = f;
+                if (stage == 0) received = bytes;
+            }, [this] { return cancel.load(); });
             if (r.failed()) { error = r.getErrorMessage(); state = failed; } else state = done;
         });
     }
