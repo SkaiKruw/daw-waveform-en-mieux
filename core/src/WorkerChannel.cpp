@@ -13,6 +13,11 @@
  #include <ctime>
  #include <pthread.h>
  #include <sched.h>
+ #if defined(__APPLE__)
+  #include <mach/mach.h>
+  #include <mach/mach_time.h>
+  #include <mach/thread_policy.h>
+ #endif
  #include <semaphore.h>
  #include <sys/resource.h>
  #include <unistd.h>
@@ -40,7 +45,10 @@ namespace onde
 
     void WorkerChannel::limitRealtimeRuntime()
     {
-       #ifndef _WIN32
+       #if defined(__APPLE__)
+        // macOS : rien à faire. Le noyau rétrograde lui-même un thread « contrainte de temps »
+        // qui dépasse son budget de calcul (voir makeCurrentThreadAudio).
+       #elif !defined(_WIN32)
         // GARDE-FOU : un plugin bloqué en priorité temps réel gèlerait toute la machine.
         // Le noyau tue le worker s'il calcule plus de 100 ms d'affilée sans se mettre en attente.
         rlimit rt { 100000, 100000 };
@@ -54,6 +62,19 @@ namespace onde
         // MMCSS « Pro Audio » : priorité audio, mais une part du processeur reste au système.
         DWORD taskIndex = 0;
         AvSetMmThreadCharacteristicsW (L"Pro Audio", &taskIndex);
+       #elif defined(__APPLE__)
+        // macOS : politique « contrainte de temps » (celle des threads audio du système) : au plus 2 ms de
+        // calcul toutes les 10 ms ; au-delà, le noyau rend au thread une priorité ordinaire.
+        mach_timebase_info_data_t tb {};
+        mach_timebase_info (&tb);
+        const double ticksPerMs = 1.0e6 * (double) tb.denom / (double) tb.numer;
+        thread_time_constraint_policy_data_t policy {};
+        policy.period      = (uint32_t) (10.0 * ticksPerMs);
+        policy.computation = (uint32_t) (2.0 * ticksPerMs);
+        policy.constraint  = (uint32_t) (10.0 * ticksPerMs);
+        policy.preemptible = 1;
+        thread_policy_set (pthread_mach_thread_np (pthread_self()), THREAD_TIME_CONSTRAINT_POLICY,
+                           (thread_policy_t) &policy, THREAD_TIME_CONSTRAINT_POLICY_COUNT);
        #else
         rlimit rt {};
         if (getrlimit (RLIMIT_RTTIME, &rt) == 0 && rt.rlim_cur != RLIM_INFINITY)   // seulement avec le garde-fou
