@@ -10,7 +10,7 @@ public:
     void paint (juce::Graphics&) override;
     void resized() override;
     static void show();
-    static constexpr const char* version = "0.7";
+    static constexpr const char* version = "0.7.1";
     static juce::StringArray whatsNew();             // nouveautés de cette version
     void checkNow();
 

@@ -15,7 +15,9 @@ static juce::String buildDate()
 
 juce::StringArray AboutPanel::whatsNew()
 {
-    return { U ("Onde Pédalier : 16 pédales à choisir et ranger dans l'ordre (glisser), interrupteurs au pied"),
+    return { U ("0.7.1 : l'installateur Windows de la 0.7 ne démarrait pas sur certains PC (runtime Visual C++), corrigé"),
+             U ("Version macOS (Apple Silicon et Intel)"),
+             U ("Onde Pédalier : 16 pédales à choisir et ranger dans l'ordre (glisser), interrupteurs au pied"),
              U ("Instruments réels en tête de la bibliothèque de sons : piano à queue, cordes, cuivres, bois, basses…"),
              U ("Onde Ampli : type de micro (dynamique, condensateur, ruban), micro d'ambiance, affaissement (sag)"),
              U ("Instruments créés depuis des échantillons : plus de notes muettes selon la force de frappe"),

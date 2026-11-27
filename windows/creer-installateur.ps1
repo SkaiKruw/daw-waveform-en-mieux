@@ -32,8 +32,13 @@ if (-not $SansModeles -and (Test-Path (Join-Path $rel 'modeles-demucs'))) { Copy
 # Runtime Visual C++ à côté du programme (déploiement « app-local ») : rien à installer en plus.
 $vswhere = Join-Path ${env:ProgramFiles(x86)} 'Microsoft Visual Studio\Installer\vswhere.exe'
 $vs = if (Test-Path $vswhere) { & $vswhere -latest -products * -property installationPath } else { $null }
-$crt = Get-ChildItem (Join-Path $vs 'VC\Redist\MSVC') -Recurse -Directory -Filter 'Microsoft.VC14*.CRT' -ErrorAction SilentlyContinue |
-       Where-Object { $_.FullName -match '\\x64\\' -and $_.FullName -notmatch 'onecore|Debug' } | Select-Object -First 1
+# La version la PLUS RÉCENTE : le programme est compilé avec le dernier compilateur ; un runtime plus ancien posé
+# à côté de lui l'empêcherait de démarrer (Visual Studio garde souvent plusieurs versions de redistribuables).
+$crt = Get-ChildItem (Join-Path $vs 'VC\Redist\MSVC') -Directory -ErrorAction SilentlyContinue |
+       Where-Object { $_.Name -match '^\d+\.\d+\.\d+$' } | Sort-Object { [version] $_.Name } -Descending |
+       ForEach-Object { Get-ChildItem $_.FullName -Recurse -Directory -Filter 'Microsoft.VC14*.CRT' -ErrorAction SilentlyContinue |
+                        Where-Object { $_.FullName -match '\\x64\\' -and $_.FullName -notmatch 'onecore|Debug' } } |
+       Select-Object -First 1
 if (-not $crt) { throw 'Runtime Visual C++ (Microsoft.VC14x.CRT, x64) introuvable dans Visual Studio.' }
 Copy-Item (Join-Path $crt.FullName '*.dll') $app
 Write-Host "Runtime : $($crt.FullName)"

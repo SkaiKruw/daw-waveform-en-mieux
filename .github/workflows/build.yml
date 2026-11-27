@@ -32,6 +32,17 @@ jobs:
       - name: Installateur (sans les modèles du séparateur, téléchargeables à part)
         shell: pwsh
         run: ./windows/creer-installateur.ps1 -SansModeles
+      - name: Essai du paquet final (Onde lancé depuis l'archive portable, avec ses propres DLL)
+        shell: pwsh
+        run: |
+          $zip = Get-ChildItem build-windows/installateur/Onde-*-portable.zip | Select-Object -First 1
+          Expand-Archive $zip.FullName -DestinationPath essai-paquet -Force
+          New-Item -ItemType Directory -Force essai-rendu | Out-Null
+          $p = Start-Process essai-paquet/Onde.exe -ArgumentList '--render-test', "$PWD\essai-rendu" -PassThru -NoNewWindow `
+               -RedirectStandardOutput essai-rendu/sortie.txt -RedirectStandardError essai-rendu/erreurs.txt
+          if (-not $p.WaitForExit(300000)) { $p.Kill(); throw 'Onde ne répond pas (5 min)' }
+          Get-Content essai-rendu/sortie.txt
+          if ($p.ExitCode -ne 0) { Get-Content essai-rendu/erreurs.txt; throw "Onde ne démarre pas depuis le paquet (code $($p.ExitCode))" }
       - uses: actions/upload-artifact@v7
         with:
           name: Onde-Windows
