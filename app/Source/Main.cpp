@@ -8,6 +8,8 @@
 #include "Preferences.h"
 #include "Updater.h"
 #include "OndeSampler.h"
+#include "Pedalboard.h"
+#include "LibraryPanel.h"
 #include "Libraries.h"
 #include "OndeSynth.h"
 #include "OndeFx2.h"
@@ -167,6 +169,7 @@ namespace
         if (args[1] == "tout") for (auto& i : libraries::catalog()) todo.add (&i);
         else if (auto* i = libraries::find (args[1])) todo.add (i);
         if (todo.isEmpty()) { std::printf ("  bibliothèque inconnue : %s\n", args[1].toRawUTF8()); return 2; }
+        if (const int n = libraries::refreshGeneratedInstruments(); n > 0) std::printf ("  info   : %d bibliothèques : instruments recréés (nouvelle carte)\n", n);
         auto edit = te::Edit::createSingleTrackEdit (engine);
         for (auto* info : todo)
         {
@@ -246,6 +249,37 @@ namespace
             check (! instruments.isEmpty() && playable == instruments.size(),
                    juce::String::fromUTF8 (info->name) + " : " + juce::String (playable) + "/" + juce::String (instruments.size()) + U (" instruments jouables")
                    + (problems.isEmpty() ? juce::String() : U (" ; à revoir : ") + problems.joinIntoString (" | ")));
+        }
+        // Instruments réels présentés dans la bibliothèque de sons : chacun se charge et sonne sur sa tessiture.
+        if (args[1] == "tout")
+        {
+            int ok = 0; juce::StringArray bad;
+            for (auto& e : realinstruments::catalog())
+            {
+                const auto f = realinstruments::fileFor (e);
+                auto plugin = edit->getPluginCache().createNewPlugin (ondefx::SamplerPlugin::xmlTypeName, {});
+                auto* s = dynamic_cast<ondefx::SamplerPlugin*> (plugin.get());
+                s->loadInstrument (f);
+                juce::MessageManager::getInstance()->runDispatchLoopUntil (20);
+                s->waitUntilLoaded (300000);
+                auto inst = s->getInstrument();
+                if (! f.existsAsFile() || inst == nullptr || inst->regions.empty()) { bad.add (juce::String::fromUTF8 (e.name) + U (" (absent)")); continue; }
+                int lo = 127, hi = 0; for (auto& r : inst->regions) if (! r.releaseTrigger) { lo = std::min (lo, r.lokey); hi = std::max (hi, r.hikey); }
+                int note = (lo + hi) / 2; for (int d = 0; d < 24 && ! inst->hasNote (note); ++d) note = (lo + hi) / 2 + (d % 2 ? d : -d);
+                s->initialise ({ te::TimePosition(), 48000.0, 512 });
+                juce::AudioBuffer<float> b (2, 48000); b.clear();
+                for (int pos = 0; pos < b.getNumSamples(); pos += 512)
+                {
+                    te::MidiMessageArray midi;
+                    if (pos == 0) midi.addMidiMessage (juce::MidiMessage::noteOn (1, note, (juce::uint8) 100), 0.0, {});
+                    te::PluginRenderContext rc (&b, pos, juce::jmin (512, b.getNumSamples() - pos), &midi, 0.0, {}, true, false, true, false);
+                    s->applyToBuffer (rc);
+                }
+                const float rms = juce::Decibels::gainToDecibels (b.getRMSLevel (0, 0, b.getNumSamples()));
+                if (rms > -60.0f) ++ok; else bad.add (juce::String::fromUTF8 (e.name) + U (" (silencieux)"));
+            }
+            check (bad.isEmpty(), U ("instruments réels : ") + juce::String (ok) + "/" + juce::String ((int) realinstruments::catalog().size())
+                                  + U (" jouables") + (bad.isEmpty() ? juce::String() : U (" ; à revoir : ") + bad.joinIntoString (", ")));
         }
         EditContext::destroyEdit (edit);
         std::printf ("\n%s\n", failures == 0 ? "BIBLIOTHEQUES OK" : "DES VERIFICATIONS ECHOUENT");
@@ -2830,6 +2864,69 @@ private:
                            + U (" dB ; porte : souffle ") + juce::String (juce::Decibels::gainToDecibels (gated), 0) + U (" dB au lieu de ")
                            + juce::String (juce::Decibels::gainToDecibels (open), 0) + U (" dB ; crête ") + juce::String (pk, 1) + " dBFS");
                     if (auto e = ondefx::createEditor (*amp)) { pump (200); snapshot (*e, dir.getChildFile ("20c-onde-ampli.png")); }
+                }
+
+                // Onde Pédalier : chaque pédale modifie le son sans exploser, l'ordre se change, l'annulation suit.
+                {
+                    auto pbPtr = ed.getPluginCache().createNewPlugin (ondefx::PedalboardPlugin::xmlTypeName, {});
+                    auto* pbd = dynamic_cast<ondefx::PedalboardPlugin*> (pbPtr.get());
+                    auto runPb = [&] (float amplitude)
+                    {
+                        pbd->initialise ({ te::TimePosition(), 48000.0, 512 });
+                        juce::AudioBuffer<float> b (2, 48000);
+                        for (int i = 0; i < b.getNumSamples(); ++i)
+                        {
+                            const float env = std::exp (-3.0f * (float) (i % 24000) / 24000.0f);    // deux notes pincées
+                            for (int c = 0; c < 2; ++c) b.setSample (c, i, amplitude * env * (float) std::sin (juce::MathConstants<double>::twoPi * 196.0 * i / 48000.0));
+                        }
+                        for (int s = 0; s < b.getNumSamples(); s += 512)
+                        {
+                            te::PluginRenderContext rc (&b, s, juce::jmin (512, b.getNumSamples() - s), nullptr, 0.0, {}, true, false, true, false);
+                            pbd->applyToBuffer (rc);
+                        }
+                        return b;
+                    };
+                    const auto dryPb = runPb (0.3f);
+                    const float dryPk = juce::Decibels::gainToDecibels (dryPb.getMagnitude (0, 0, dryPb.getNumSamples()));
+                    juce::String report; bool allOk = true;
+                    for (int type = 1; type < ondefx::pedals::numTypes; ++type)
+                    {
+                        pbd->setPedal (0, type);
+                        if (type == ondefx::pedals::volume) pbd->setStored ("s1k1", 0.5f);
+                        if (type == ondefx::pedals::gate) pbd->setStored ("s1k1", 0.9f);
+                        if (type == ondefx::pedals::eq) pbd->setStored ("s1k2", 0.9f);
+                        const auto wet = runPb (0.3f);
+                        double diff = 0; bool finite = true;
+                        for (int i = 0; i < wet.getNumSamples(); ++i)
+                        { const float a = wet.getSample (0, i); finite = finite && std::isfinite (a); diff = std::max (diff, (double) std::abs (a - dryPb.getSample (0, i))); }
+                        const float pk = juce::Decibels::gainToDecibels (wet.getMagnitude (0, 0, wet.getNumSamples())) - dryPk;
+                        const bool ok = finite && diff > 0.002 && pk < 14.0f;
+                        allOk = allOk && ok;
+                        if (! ok) report << juce::String::fromUTF8 (ondefx::pedals::info (type).name) << " (diff " << juce::String (diff, 4) << ", " << juce::String (pk, 1) << " dB) ; ";
+                    }
+                    check (allOk, U ("Onde Pédalier : les ") + juce::String (ondefx::pedals::numTypes - 1) + U (" pédales changent le son, crête maîtrisée ") + report);
+
+                    // Ordre : overdrive puis délai ; déplacer le délai en tête ; éteindre ; annuler.
+                    auto& um = ed.getUndoManager();
+                    um.beginNewTransaction();
+                    pbd->applyPreset ({ { ondefx::pedals::overdrive, { 0.5f, 0.5f, 0.5f, 0 } }, { ondefx::pedals::delay, { 0.3f, 0.3f, 0.3f, 0 } } });
+                    um.beginNewTransaction();
+                    pbd->moveSlot (1, 0);
+                    const bool moved = pbd->slotType (0) == ondefx::pedals::delay && pbd->slotType (1) == ondefx::pedals::overdrive
+                                       && std::abs (pbd->slotKnob (0, 0) - 0.3f) < 1.0e-4f && pbd->slotType (2) == ondefx::pedals::empty;
+                    um.beginNewTransaction();
+                    pbd->setStored (ondefx::PedalboardPlugin::paramId (1, "on"), 0.0f);
+                    const auto bypassed = runPb (0.3f);
+                    um.undo(); um.undo();
+                    pump (50);
+                    const bool undone = pbd->slotType (0) == ondefx::pedals::overdrive && pbd->slotOn (1);
+                    const bool preset = ondefx::applyPedalboardPreset (*pbd, U ("Rock classique")) && pbd->slotType (1) == ondefx::pedals::overdrive;
+                    check (moved && undone && preset && bypassed.getMagnitude (0, 0, 48000) < 1.2f,
+                           U ("Onde Pédalier : déplacer une pédale ") + (moved ? "ok" : "ÉCHEC") + U (", annuler ") + (undone ? "ok" : "ÉCHEC")
+                           + U (", préréglage ") + (preset ? "ok" : "ÉCHEC"));
+                    ondefx::applyPedalboardPreset (*pbd, U ("Fuzz vintage"));
+                    pbd->setStored (ondefx::PedalboardPlugin::paramId (2, "on"), 0.0f);
+                    if (auto e = ondefx::createEditor (*pbd)) { pump (200); snapshot (*e, dir.getChildFile ("20d-onde-pedalier.png")); }
                 }
 
                 // Écho et espace sur un clic isolé à 0,5 s.

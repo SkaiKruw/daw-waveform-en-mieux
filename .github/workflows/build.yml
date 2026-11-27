@@ -64,7 +64,7 @@ jobs:
 
   publier:
     if: startsWith(github.ref, 'refs/tags/v')
-    needs: [ windows ]
+    needs: [ windows, macos ]
     runs-on: ubuntu-latest
     permissions:
       contents: write

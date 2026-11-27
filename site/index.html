@@ -1,0 +1,168 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self'; connect-src https://api.github.com; base-uri 'none'; form-action 'none'">
+<meta name="referrer" content="no-referrer">
+<meta name="color-scheme" content="dark light">
+<title>Onde · logiciel de musique libre pour Windows et macOS</title>
+<meta name="description" content="Onde est un logiciel de musique libre et gratuit : enregistrement, piano roll, mixage, vrais instruments enregistrés, ampli et pédalier guitare, batteur, tablature.">
+<meta property="og:title" content="Onde · logiciel de musique libre">
+<meta property="og:description" content="Enregistrer, composer et mixer, avec de vrais instruments prêts à jouer. Gratuit et libre.">
+<meta property="og:image" content="images/arrangement.png">
+<link rel="icon" type="image/svg+xml" href="images/logo.svg">
+<link rel="icon" type="image/png" sizes="32x32" href="images/logo-32.png">
+<link rel="apple-touch-icon" href="images/logo-192.png">
+<link rel="stylesheet" href="site.css">
+<script src="site.js" defer></script>
+</head>
+<body>
+<a class="skip" href="#contenu">Aller au contenu</a>
+
+<header class="bar">
+  <div class="wrap bar-in">
+    <a class="brand" href="#haut" aria-label="Onde, haut de la page">
+      <img src="images/logo.svg" width="28" height="28" alt="">
+      <span>Onde</span>
+    </a>
+    <nav aria-label="Sections">
+      <a href="#enregistrer">Enregistrer</a>
+      <a href="#guitare">Guitare</a>
+      <a href="#instruments">Instruments</a>
+      <a href="#mixer">Mixer</a>
+      <a href="https://github.com/SkaiKruw/daw-waveform-en-mieux" rel="noopener">Code source</a>
+    </nav>
+    <a class="bar-cta" href="#telecharger">Télécharger</a>
+  </div>
+</header>
+
+<main id="contenu">
+  <section class="hero" id="haut">
+    <div class="wrap">
+      <h1>Onde</h1>
+      <p class="tagline">Un logiciel pour enregistrer, composer et mixer, avec de vrais instruments prêts à jouer dès l'installation.</p>
+
+      <div class="get" id="telecharger">
+        <div class="get-actions">
+          <a class="button primary" id="win-btn" href="https://github.com/SkaiKruw/daw-waveform-en-mieux/releases/latest" rel="noopener">
+            <svg aria-hidden="true" viewBox="0 0 24 24"><path d="M3 5.5 10.5 4.4v7.1H3zM11.5 4.3 21 3v8.5h-9.5zM3 12.5h7.5v7.1L3 18.5zM11.5 12.5H21V21l-9.5-1.3z"/></svg>
+            <span>Télécharger pour Windows</span>
+          </a>
+          <a class="button" id="mac-btn" href="#mac">
+            <svg aria-hidden="true" viewBox="0 0 24 24"><path d="M16.4 12.6c0-2.6 2.1-3.8 2.2-3.9-1.2-1.8-3.1-2-3.7-2-1.6-.2-3.1.9-3.9.9-.8 0-2-.9-3.4-.9-1.7 0-3.3 1-4.2 2.6-1.8 3.1-.5 7.7 1.3 10.2.9 1.2 1.9 2.6 3.2 2.6 1.3-.1 1.8-.8 3.3-.8 1.6 0 2 .8 3.4.8 1.4 0 2.3-1.3 3.1-2.5 1-1.4 1.4-2.8 1.4-2.9 0 0-2.7-1-2.7-4.1zM13.8 5c.7-.9 1.2-2 1-3.2-1 .1-2.3.7-3 1.6-.7.8-1.2 2-1.1 3.1 1.2.1 2.3-.6 3.1-1.5z"/></svg>
+            <span id="mac-label">macOS : en préparation</span>
+          </a>
+        </div>
+        <div class="lcd" aria-live="polite">
+          <span class="lcd-key">VERSION</span><span class="lcd-val" id="rel-version">0.7</span>
+          <span class="lcd-key">SYSTÈME</span><span class="lcd-val">Windows 64 bits</span>
+          <span class="lcd-key">TAILLE</span><span class="lcd-val" id="rel-size">25 Mo</span>
+          <span class="lcd-key" id="rel-date-key" hidden>PUBLIÉE</span><span class="lcd-val" id="rel-date" hidden></span>
+        </div>
+        <p class="fine">Gratuit, sans compte ni publicité. Logiciel libre sous licence GPL v3.
+          <a id="win-zip" href="https://github.com/SkaiKruw/daw-waveform-en-mieux/releases/latest" rel="noopener">Version portable sans installation</a>.</p>
+      </div>
+    </div>
+    <div class="wrap wide">
+      <img class="shot" src="images/arrangement.png" width="1440" height="860"
+           alt="Fenêtre principale d'Onde : pistes de batterie, basse, guitare et voix, régions colorées sur la ligne de temps, barre de transport en haut.">
+    </div>
+  </section>
+
+  <section class="feature" id="enregistrer" aria-labelledby="t-enr">
+    <div class="wrap split">
+      <div class="text">
+        <h2 id="t-enr">Enregistrer, puis écrire la suite</h2>
+        <p>Choisissez l'entrée de chaque piste (micro sur l'entrée 1, guitare sur l'entrée 2) et armez-en plusieurs à la fois. Un décompte d'une ou deux mesures laisse le temps de se placer. Les prises s'empilent et se comparent pour garder les meilleurs passages.</p>
+        <p>Au clavier, le piano roll écrit les notes, les nuances et les expressions ; la piste d'arrangement déplace un couplet ou un refrain d'un geste.</p>
+        <ul class="facts">
+          <li>Sauvegarde automatique, et récupération après une coupure</li>
+          <li>Plugins VST3 isolés : un plugin qui plante ne fait pas tomber le projet</li>
+          <li>Séparation d'un morceau en voix, batterie, basse et le reste</li>
+        </ul>
+      </div>
+      <img class="shot" src="images/piano-roll.png" width="1440" height="860" loading="lazy"
+           alt="Piano roll d'Onde : notes d'une mélodie sur une grille, vélocités en dessous.">
+    </div>
+  </section>
+
+  <section class="feature" id="guitare" aria-labelledby="t-gtr">
+    <div class="wrap split reverse">
+      <div class="text">
+        <h2 id="t-gtr">Un pédalier, puis un ampli</h2>
+        <p>Branchez la guitare et posez vos pédales comme sur une planche : overdrive, fuzz, octaveur, wah, chorus, phaser, flanger, trémolo, délai analogique, réverbération à ressort, compresseur, porte de bruit. Faites-les glisser pour changer l'ordre ; l'interrupteur au pied les allume et les coupe.</p>
+        <p>Derrière, l'ampli simule les lampes, l'affaissement de l'alimentation quand on attaque fort, le baffle, le micro (dynamique, condensateur ou ruban) et la pièce.</p>
+        <p class="note">Effets conçus pour Onde, pas des copies d'appareils existants.</p>
+      </div>
+      <img class="shot" src="images/pedalier.png" width="960" height="600" loading="lazy"
+           alt="Onde Pédalier : quatre pédales reliées par des câbles (fuzz, octaveur, trémolo éteint, réverbération à ressort) et quatre emplacements libres.">
+    </div>
+    <div class="wrap">
+      <img class="shot narrow" src="images/ampli.png" width="940" height="590" loading="lazy"
+           alt="Onde Ampli : modèles Clair, Crunch, Lead, Moderne et Basse, façade avec lampes, boutons de gain, égaliseur, sag, micro et ambiance.">
+    </div>
+  </section>
+
+  <section class="feature" id="instruments" aria-labelledby="t-ins">
+    <div class="wrap">
+      <h2 id="t-ins">De vrais instruments, enregistrés par des musiciens</h2>
+      <p class="lead">Ce ne sont pas des imitations synthétiques : chaque note a été jouée et enregistrée. Les bibliothèques sont libres et se téléchargent depuis Onde, d'un clic, quand vous en avez besoin.</p>
+      <div class="families">
+        <div><h3>Pianos</h3><p>Piano à queue de concert, piano droit, piano droit sombre</p></div>
+        <div><h3>Cordes</h3><p>Violons, altos, violoncelles en ensemble ; spiccato, pizzicato, trémolo ; violon et violoncelle solo ; contrebasse ; harpe</p></div>
+        <div><h3>Cuivres</h3><p>Trompette, trompette sourdine, cor, trombone, tuba</p></div>
+        <div><h3>Bois</h3><p>Flûte, piccolo, hautbois, clarinette, basson, saxophone alto</p></div>
+        <div><h3>Basses et guitares</h3><p>Basses électriques, contrebasse jazz, guitares acoustique et électrique</p></div>
+        <div><h3>Percussions</h3><p>Batterie acoustique multi-micros, glockenspiel, marimba, xylophone</p></div>
+      </div>
+      <p class="note">S'y ajoutent des dizaines de sons de synthèse, un batteur qui joue tout seul et vos propres plugins.</p>
+    </div>
+  </section>
+
+  <section class="feature" id="mixer" aria-labelledby="t-mix">
+    <div class="wrap split">
+      <div class="text">
+        <h2 id="t-mix">Mixer et finir le morceau</h2>
+        <p>Console avec groupes et VCA, automation, gel des pistes, égaliseur, compresseur et limiteur, mesure de la sonie pour viser les plateformes de streaming. Export WAV, FLAC, MP3 ou OGG, en entier ou piste par piste.</p>
+        <p>Pour écrire : tablature avec accordages libres (6, 7, 8 cordes, basse), portée, et paroles calées sur le morceau.</p>
+      </div>
+      <img class="shot" src="images/mixeur.png" width="1440" height="860" loading="lazy"
+           alt="Console de mixage d'Onde : tranches avec vumètres, faders, envois et effets.">
+    </div>
+  </section>
+
+  <section class="install" aria-labelledby="t-inst">
+    <div class="wrap split top">
+      <div>
+        <h2 id="t-inst">Installer</h2>
+        <ol>
+          <li>Lancez <code>Onde-Setup.exe</code>. Le logiciel n'est pas encore signé : si Windows affiche « Windows a protégé votre ordinateur », choisissez « Informations complémentaires », puis « Exécuter quand même ».</li>
+          <li>Au premier lancement, ouvrez MIDI › Bibliothèques d'instruments et téléchargez les instruments qui vous intéressent.</li>
+          <li>Onde signale lui-même les nouvelles versions.</li>
+        </ol>
+        <p class="note" id="checksum"></p>
+      </div>
+      <div id="mac">
+        <h2>macOS</h2>
+        <p id="mac-text">Le portage pour Mac est en cours. Le bouton de téléchargement s'activera ici dès qu'une version Mac sera publiée.</p>
+        <h2 class="sp">Configuration</h2>
+        <dl class="specs">
+          <dt>Système</dt><dd>Windows 10 ou 11, 64 bits</dd>
+          <dt>Mémoire</dt><dd>8 Go conseillés</dd>
+          <dt>Disque</dt><dd>100 Mo, plus les bibliothèques choisies (de 20 Mo à 2 Go chacune)</dd>
+          <dt>Audio</dt><dd>Toute carte son ; ASIO conseillé pour enregistrer</dd>
+        </dl>
+      </div>
+    </div>
+  </section>
+</main>
+
+<footer>
+  <div class="wrap foot">
+    <p>Onde est un logiciel libre (GPL v3). <a href="https://github.com/SkaiKruw/daw-waveform-en-mieux" rel="noopener">Code source</a> · <a href="https://github.com/SkaiKruw/daw-waveform-en-mieux/releases" rel="noopener">Toutes les versions</a> · <a href="https://github.com/SkaiKruw/daw-waveform-en-mieux/issues" rel="noopener">Signaler un problème</a></p>
+    <p class="credits">Instruments enregistrés : Versilian Community Sample Library (VSCO 2), Salamander Grand Piano par Alexander Holm (CC BY), bibliothèques Karoryfer Samples et autres contributions libres ; licence de chacune affichée dans Onde.</p>
+  </div>
+</footer>
+</body>
+</html>

@@ -1160,6 +1160,9 @@ namespace ondefx
         declare ("cab", "Baffle", { 0.0f, 4.0f, 1.0f }, 3.0f, choiceText (cabNames, 5));
         declare ("mic", "Micro (centre / bord)", { 0.0f, 1.0f }, 0.3f, [] (float v) { return v < 0.15f ? juce::String ("centre") : v > 0.85f ? juce::String ("bord") : juce::String (juce::roundToInt (v * 100)) + " %"; });
         declare ("level", "Volume", { -24.0f, 12.0f }, 0.0f, dbText);
+        declare ("micType", "Type de micro", { 0.0f, 2.0f, 1.0f }, 0.0f, choiceText (micNames, 3));
+        declare ("room", juce::String::fromUTF8 ("Micro d'ambiance"), { 0.0f, 100.0f }, 15.0f, pctText);
+        declare ("sag", juce::String::fromUTF8 ("Affaissement (sag)"), { 0.0f, 10.0f }, 3.0f, tenth);
     }
 
     void AmpPlugin::initialise (const te::PluginInitialisationInfo& info)
@@ -1168,6 +1171,9 @@ namespace ondefx
         preparedBlock = juce::jlimit (64, 8192, info.blockSizeSamples * 2);
         oversampling = std::make_unique<juce::dsp::Oversampling<float>> (2, 2, juce::dsp::Oversampling<float>::filterHalfBandPolyphaseIIR, true, false);
         oversampling->initProcessing ((size_t) preparedBlock);
+        int size = 1; while (size < (int) (rate * 0.08)) size <<= 1;        // 80 ms de réflexions
+        for (auto& l : roomLine) l.assign ((size_t) size, 0.0f);
+        roomMask = size - 1;
         filterKey.clear();
         reset();
     }
@@ -1180,6 +1186,9 @@ namespace ondefx
         for (auto& b : cab) b.reset();
         for (int s = 0; s < 4; ++s) for (int c = 0; c < 2; ++c) stageHP[s][c] = stageHPx[s][c] = stageLP[s][c] = 0;
         gateEnv = 0; gateGain = 1; lowKeep[0] = lowKeep[1] = 0;
+        for (auto& b : micEq) b.reset();
+        for (auto& l : roomLine) std::fill (l.begin(), l.end(), 0.0f);
+        roomPos = 0; sagEnv[0] = sagEnv[1] = roomLP[0] = roomLP[1] = 0;
     }
 
     double AmpPlugin::getLatencySeconds() { return oversampling ? oversampling->getLatencyInSamples() / rate : 0.0; }
@@ -1188,7 +1197,7 @@ namespace ondefx
     {
         const int m = juce::jlimit (0, 4, juce::roundToInt (value ("model"))), c = juce::jlimit (0, 4, juce::roundToInt (value ("cab")));
         juce::String key; key << m << c;
-        for (auto* id : { "bass", "mid", "treble", "presence", "mic", "boost" }) key << ";" << value (id);
+        for (auto* id : { "bass", "mid", "treble", "presence", "mic", "boost", "micType" }) key << ";" << value (id);
         if (key == filterKey) return;
         filterKey = key;
         const auto& md = ampModels[m];
@@ -1207,13 +1216,20 @@ namespace ondefx
         cab[2].set (2, juce::jmax (20.0f, cb.dip), 1.0, cb.dipDb, fs);
         cab[3].set (0, lp, 0.75, 0, fs);
         cab[4].set (0, lp * 1.15, 0.9, 0, fs);
+        // Couleur du micro : dynamique (bosse de présence), condensateur (plus d'air, plus de grave), ruban (doux, chaud).
+        switch (juce::jlimit (0, 2, juce::roundToInt (value ("micType"))))
+        {
+            case 0:  micEq[0].set (3, 150, 0.7, -1.5, fs); micEq[1].set (2, 4500, 1.2, 3.5, fs); micEq[2].set (0, 11000, 0.7, 0, fs); break;
+            case 1:  micEq[0].set (3, 120, 0.7, 1.5, fs);  micEq[1].set (2, 4000, 0.9, 1.0, fs); micEq[2].set (4, 7000, 0.7, 2.5, fs); break;
+            default: micEq[0].set (3, 180, 0.7, 2.5, fs);  micEq[1].set (2, 2500, 0.9, -1.5, fs); micEq[2].set (4, 5000, 0.7, -5.0, fs); break;
+        }
     }
 
     float AmpPlugin::responseDb (float hz) const
     {
         float db = 0;
         for (auto& b : tone) db += b.magnitudeDb (hz, rate);
-        if (juce::roundToInt (value ("cab")) > 0) for (auto& b : cab) db += b.magnitudeDb (hz, rate);
+        if (juce::roundToInt (value ("cab")) > 0) { for (auto& b : cab) db += b.magnitudeDb (hz, rate); for (auto& b : micEq) db += b.magnitudeDb (hz, rate); }
         return db;
     }
 
@@ -1238,6 +1254,13 @@ namespace ondefx
         const float atk = 1.0f - std::exp (-1.0f / (0.001f * (float) rate)), rel = 1.0f - std::exp (-1.0f / (0.06f * (float) rate));
         const float envRel = std::exp (-1.0f / (0.05f * (float) rate));
         const float keepC = onePoleCoef (220.0f, rate);
+        const float sagAmt = value ("sag") * 0.18f, room = value ("room") / 100.0f;
+        const float sagAtk = onePoleCoef (60.0f, rate), sagRel = onePoleCoef (5.0f, rate), roomC = onePoleCoef (4500.0f, rate);
+        // Micro d'ambiance : premières réflexions de la pièce, différentes à gauche et à droite (largeur stéréo).
+        static constexpr float tapMs[2][4] = { { 7.3f, 13.1f, 21.7f, 31.9f }, { 9.1f, 16.3f, 24.2f, 35.5f } };
+        static constexpr float tapGain[4] = { 0.55f, 0.42f, 0.32f, 0.24f };
+        int taps[2][4];
+        for (int c = 0; c < 2; ++c) for (int t = 0; t < 4; ++t) taps[c][t] = (int) (tapMs[c][t] * 0.001f * (float) rate);
         {
             float pk = 0;
             for (int c = 0; c < chans; ++c) pk = std::max (pk, buf.getMagnitude (c, fc.bufferStartSample, fc.bufferNumSamples));
@@ -1294,12 +1317,31 @@ namespace ondefx
                 {
                     float y = d[i];
                     for (auto& b : tone) y = b.process (y, c);
+                    // Étage de puissance : l'alimentation s'affaisse quand on joue fort (compression, gonflement de la note).
+                    y /= 1.0f + sagAmt * sagEnv[c];
                     y = std::tanh (y * md.power) / md.power;
+                    const float a = std::abs (y);
+                    sagEnv[c] += (a > sagEnv[c] ? sagAtk : sagRel) * (a - sagEnv[c]);
                     if (m == 4) y += lowKeep[c] * 0.6f;                      // basse : fondamental propre conservé
-                    if (withCab) for (auto& b : cab) y = b.process (y, c);
+                    if (withCab)
+                    {
+                        for (auto& b : cab) y = b.process (y, c);
+                        for (auto& b : micEq) y = b.process (y, c);
+                        if (room > 0.001f && ! roomLine[0].empty())
+                        {
+                            const int pos = roomPos + i;
+                            auto& line = roomLine[c];
+                            line[(size_t) (pos & roomMask)] = y;
+                            float r = 0;
+                            for (int t = 0; t < 4; ++t) r += line[(size_t) ((pos - taps[c][t]) & roomMask)] * tapGain[t];
+                            roomLP[c] += roomC * (r - roomLP[c]);
+                            y = y * (1.0f - 0.35f * room) + roomLP[c] * room;
+                        }
+                    }
                     d[i] = y * level;
                 }
             }
+            roomPos = (roomPos + n) & roomMask;
             done += n;
         }
     }
@@ -1310,7 +1352,7 @@ namespace ondefx
         class AmpEditor  : public FxWindow
         {
         public:
-            explicit AmpEditor (AmpPlugin& p) : FxWindow (p, U8 ("Ampli guitare et basse · porte, boost, préampli à lampes, baffle"), juce::Colour (0xffe5a04e)), amp (p)
+            explicit AmpEditor (AmpPlugin& p) : FxWindow (p, U8 ("Ampli guitare et basse · porte, boost, préampli à lampes, sag, baffle, micro et pièce"), juce::Colour (0xffe5a04e)), amp (p)
             {
                 for (int i = 0; i < 5; ++i)
                 {
@@ -1323,21 +1365,33 @@ namespace ondefx
                 addAndMakeVisible (models);
                 knob ("gate", "Porte"); knob ("boost", "Boost"); knob ("gain", "Gain");
                 knob ("bass", "Graves"); knob ("mid", "Médiums"); knob ("treble", "Aigus");
-                knob ("presence", "Présence"); knob ("mic", "Micro"); knob ("level", "Volume");
+                knob ("presence", "Présence"); knob ("sag", "Sag"); knob ("level", "Volume");
+                knob ("mic", "Micro centre/bord"); knob ("room", "Ambiance");
+                auto* micChoice = new ondeui::ParamChoice (amp.param ("micType"), "Micro");
+                controls.add (micChoice); addAndMakeVisible (micChoice);
                 auto* cabChoice = new ondeui::ParamChoice (amp.param ("cab"), "Baffle");
                 controls.add (cabChoice); addAndMakeVisible (cabChoice);
-                preset ("Clair brillant", { { "model", 0 }, { "gate", -90 }, { "boost", 0 }, { "gain", 4 }, { "bass", 5 }, { "mid", 5 }, { "treble", 6.5f }, { "presence", 6 }, { "cab", 2 }, { "mic", 0.3f } });
-                preset ("Crunch rock", { { "model", 1 }, { "gate", -90 }, { "boost", 0 }, { "gain", 6 }, { "bass", 5 }, { "mid", 6.5f }, { "treble", 6 }, { "presence", 5 }, { "cab", 2 }, { "mic", 0.35f } });
-                preset (U8 ("Rock moderne épais"), { { "model", 2 }, { "gate", -70 }, { "boost", 3 }, { "gain", 6.5f }, { "bass", 6 }, { "mid", 6 }, { "treble", 5.5f }, { "presence", 5.5f }, { "cab", 3 }, { "mic", 0.4f } });
-                preset (U8 ("Métal serré"), { { "model", 3 }, { "gate", -58 }, { "boost", 7 }, { "gain", 6 }, { "bass", 5.5f }, { "mid", 4.5f }, { "treble", 6 }, { "presence", 6.5f }, { "cab", 3 }, { "mic", 0.25f } });
-                preset ("Djent", { { "model", 3 }, { "gate", -52 }, { "boost", 9 }, { "gain", 5 }, { "bass", 4.5f }, { "mid", 6 }, { "treble", 6.5f }, { "presence", 7 }, { "cab", 3 }, { "mic", 0.15f } });
-                preset ("Basse grasse", { { "model", 4 }, { "gate", -90 }, { "boost", 0 }, { "gain", 5 }, { "bass", 6 }, { "mid", 5.5f }, { "treble", 4.5f }, { "presence", 4 }, { "cab", 4 }, { "mic", 0.3f } });
-                setSize (900, 520);
+                preset ("Clair brillant", { { "model", 0 }, { "gate", -90 }, { "boost", 0 }, { "gain", 4 }, { "bass", 5 }, { "mid", 5 }, { "treble", 6.5f }, { "presence", 6 }, { "cab", 2 }, { "mic", 0.3f }, { "micType", 1 }, { "room", 28 }, { "sag", 4 } });
+                preset ("Crunch rock", { { "model", 1 }, { "gate", -90 }, { "boost", 0 }, { "gain", 6 }, { "bass", 5 }, { "mid", 6.5f }, { "treble", 6 }, { "presence", 5 }, { "cab", 2 }, { "mic", 0.35f }, { "micType", 0 }, { "room", 20 }, { "sag", 5 } });
+                preset (U8 ("Rock moderne épais"), { { "model", 2 }, { "gate", -70 }, { "boost", 3 }, { "gain", 6.5f }, { "bass", 6 }, { "mid", 6 }, { "treble", 5.5f }, { "presence", 5.5f }, { "cab", 3 }, { "mic", 0.4f }, { "micType", 2 }, { "room", 15 }, { "sag", 4 } });
+                preset (U8 ("Métal serré"), { { "model", 3 }, { "gate", -58 }, { "boost", 7 }, { "gain", 6 }, { "bass", 5.5f }, { "mid", 4.5f }, { "treble", 6 }, { "presence", 6.5f }, { "cab", 3 }, { "mic", 0.25f }, { "micType", 0 }, { "room", 8 }, { "sag", 2 } });
+                preset ("Djent", { { "model", 3 }, { "gate", -52 }, { "boost", 9 }, { "gain", 5 }, { "bass", 4.5f }, { "mid", 6 }, { "treble", 6.5f }, { "presence", 7 }, { "cab", 3 }, { "mic", 0.15f }, { "micType", 0 }, { "room", 5 }, { "sag", 1 } });
+                preset ("Basse grasse", { { "model", 4 }, { "gate", -90 }, { "boost", 0 }, { "gain", 5 }, { "bass", 6 }, { "mid", 5.5f }, { "treble", 4.5f }, { "presence", 4 }, { "cab", 4 }, { "mic", 0.3f }, { "micType", 1 }, { "room", 10 }, { "sag", 3 } });
+                setSize (940, 590);
             }
             void resized() override
             {
                 layout (30, &models);
                 const int w = models.getWidth() / 5;
+                // Choix du micro et du baffle empilés dans la dernière case de la grille.
+                std::vector<juce::Component*> choices;
+                for (auto* c : controls) if (dynamic_cast<ondeui::ParamChoice*> (c) != nullptr) choices.push_back (c);
+                if (! choices.empty())
+                {
+                    auto cell = choices.front()->getBounds();
+                    for (size_t i = 0; i < choices.size(); ++i)
+                        choices[i]->setBounds (cell.getX(), cell.getY() + (int) i * 46, cell.getWidth(), 42);
+                }
                 for (int i = 0; i < modelButtons.size(); ++i) modelButtons[i]->setBounds (i * w, 0, w - 4, models.getHeight());
             }
         private:

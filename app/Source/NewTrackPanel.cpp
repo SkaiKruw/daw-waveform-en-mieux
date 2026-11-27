@@ -8,7 +8,7 @@ namespace
 {
     struct Card { const char* title; const char* text; juce::uint32 colour; };
     const Card cards[NewTrackPanel::numKinds] = {
-        { "Instrument",            "Piano, synthés, basses, nappes… à jouer au clavier (écran, ordinateur ou MIDI)", 0xff3fa4ff },
+        { "Instrument",            "Vrais instruments enregistrés (piano, cordes, cuivres, bois, basses…) et synthés, à jouer au clavier", 0xff3fa4ff },
         { "Batteur",               "Une batterie qui joue toute seule : style, simple ou complexe, doux ou fort", 0xffe08a3c },
         { "Voix ou micro",         "Chant, voix parlée, podcast : chaîne « Voix pop » et piste prête à enregistrer", 0xffe8697a },
         { "Guitare ou basse",      "Branchée sur la carte son : chaîne « Guitare claire », prête à enregistrer", 0xff9be35b },
@@ -190,7 +190,10 @@ te::AudioTrack* NewTrackPanel::create (EditContext& ctx, Kind kind)
     {
         case instrument:
             um.beginNewTransaction (U ("Ajouter une piste instrument"));
-            if (auto* p = ondefx::SynthPlugin::findPreset (U ("Piano de concert"))) t = LibraryPanel::applyToTrack (ctx, nullptr, *p);
+            // Un vrai piano enregistré si la bibliothèque est là, sinon le piano de synthèse.
+            if (auto* real = realinstruments::find (U ("Piano à queue de concert")); real != nullptr && realinstruments::available (*real))
+                t = realinstruments::applyToTrack (ctx, nullptr, *real);
+            else if (auto* p = ondefx::SynthPlugin::findPreset (U ("Piano de concert"))) t = LibraryPanel::applyToTrack (ctx, nullptr, *p);
             ctx.perform ("midi.library");                // choisir le son tout de suite
             break;
         case drums:

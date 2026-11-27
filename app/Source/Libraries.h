@@ -28,6 +28,9 @@ namespace libraries
     const Info* find (const juce::String& id);
     // Crée des instruments SFZ à partir d'échantillons nommés (note, vélocité, variation) ; renvoie leur nombre.
     int buildInstrumentsFromSamples (const juce::File& samplesRoot, const juce::File& outDir, std::function<void (float)> progress);
+    constexpr const char* automapVersion = "carte v2";
+    // Instruments créés par une version précédente du générateur : recréés (au démarrage, en arrière-plan). Renvoie leur nombre.
+    int refreshGeneratedInstruments();
 }
 
 class LibrariesPanel  : public juce::Component, private juce::Timer

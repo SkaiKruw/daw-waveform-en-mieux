@@ -183,6 +183,7 @@ namespace ondefx
         void applyToBuffer (const te::PluginRenderContext&) override;
         static constexpr const char* modelNames[5] = { "Clair", "Crunch", "Lead", "Moderne", "Basse" };
         static constexpr const char* cabNames[5] = { "Sans baffle", "1x12 ouvert", "2x12", "4x12 fermé", "Basse 8x10" };
+        static constexpr const char* micNames[3] = { "Dynamique", "Condensateur", "Ruban" };
         float responseDb (float hz) const;           // égaliseur + baffle (affichage)
         std::atomic<float> gateOpen { 1.0f }, inputDb { -100.0f };
 
@@ -199,7 +200,10 @@ namespace ondefx
         double rate = 48000.0;
         std::unique_ptr<juce::dsp::Oversampling<float>> oversampling;
         int preparedBlock = 0;
-        Biquad tone[4], cab[5], boostMid, inputHP, tight;
+        Biquad tone[4], cab[5], boostMid, inputHP, tight, micEq[3];
+        std::vector<float> roomLine[2];
+        int roomPos = 0, roomMask = 0;
+        float sagEnv[2] {}, roomLP[2] {};
         float stageHP[4][2] {}, stageHPx[4][2] {}, stageLP[4][2] {}, gateEnv = 0, gateGain = 1, lowKeep[2] {};
         juce::String filterKey;
     };

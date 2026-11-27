@@ -64,6 +64,8 @@ MainComponent::MainComponent (te::Engine& e, PluginCatalog& c) : engine (e), cat
     KeyboardPanel::getDevice (engine);
     // Entrées audio : une par prise (micro sur 1, guitare sur 2), réappliqué quand la carte son change.
     ctx.useMonoInputs (prefs::monoInputs());
+    // Instruments créés par une ancienne version du générateur (trous de vélocité) : recréés en arrière-plan.
+    if (! testMode) std::thread ([] { juce::Thread::setCurrentThreadName ("Onde : instruments"); libraries::refreshGeneratedInstruments(); }).detach();
     prefs::applyClickSound (engine);
     ondefx::openLibrariesHook() = [this] { ctx.perform ("midi.libraries"); };
     if (! testMode && updates::shouldCheckToday())

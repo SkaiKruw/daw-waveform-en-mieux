@@ -4,6 +4,7 @@
 #include "OndeSynth.h"
 #include "OndeFx2.h"
 #include "OndeSampler.h"
+#include "Pedalboard.h"
 #include "Theme.h"
 #include "ParamControls.h"
 
@@ -470,6 +471,7 @@ namespace ondefx
         if (auto* l = dynamic_cast<LimiterPlugin*> (&p))      return std::make_unique<LimiterEditor> (*l);
         if (auto* s = dynamic_cast<SynthPlugin*> (&p))        return createSynthEditor (*s);
         if (auto* sp = dynamic_cast<SamplerPlugin*> (&p))     return createSamplerEditor (*sp);
+        if (auto* pbd = dynamic_cast<PedalboardPlugin*> (&p)) return createPedalboardEditor (*pbd);
         if (auto e = createFx2Editor (p))                      return e;
         return {};
     }

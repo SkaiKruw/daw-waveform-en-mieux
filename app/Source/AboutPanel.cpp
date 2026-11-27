@@ -15,7 +15,11 @@ static juce::String buildDate()
 
 juce::StringArray AboutPanel::whatsNew()
 {
-    return { U ("Onde Ampli : ampli guitare et basse (clair, crunch, lead, moderne, basse), boost, porte, baffles"),
+    return { U ("Onde Pédalier : 16 pédales à choisir et ranger dans l'ordre (glisser), interrupteurs au pied"),
+             U ("Instruments réels en tête de la bibliothèque de sons : piano à queue, cordes, cuivres, bois, basses…"),
+             U ("Onde Ampli : type de micro (dynamique, condensateur, ruban), micro d'ambiance, affaissement (sag)"),
+             U ("Instruments créés depuis des échantillons : plus de notes muettes selon la force de frappe"),
+             U ("Onde Ampli : ampli guitare et basse (clair, crunch, lead, moderne, basse), boost, porte, baffles"),
              U ("Guitares, basses, harpe et ukulélé en modélisation physique (6, 7, 8 et 12 cordes)"),
              U ("Fenêtre d'instrument redessinée : navigateur de sons, clavier et pads pour essayer"),
              U ("Une entrée par piste : micro sur 1, guitare sur 2, plusieurs pistes armées ensemble"),

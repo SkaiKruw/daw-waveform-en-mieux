@@ -102,6 +102,9 @@ namespace libraries
 
     int buildInstrumentsFromSamples (const juce::File& root, const juce::File& outDir, std::function<void (float)> progress)
     {
+        // Instruments créés par une version précédente : retirés (seulement ceux qu'Onde a écrits).
+        for (auto& old : outDir.findChildFiles (juce::File::findFiles, false, "*.sfz"))
+            if (old.loadFileAsString().startsWith (juce::String::fromUTF8 ("// Instrument créé par Onde"))) old.deleteFile();
         // Échantillons regroupés par dossier et par préfixe (articulation).
         std::map<juce::String, std::vector<Parsed>> groups;
         std::map<juce::String, juce::String> names;
@@ -152,7 +155,7 @@ namespace libraries
             const auto lower = artName.toLowerCase();
             const bool shortArt = lower.contains ("spic") || lower.contains ("pizz") || lower.contains ("stac") || lower.contains ("hit") || lower.contains ("short");
             juce::String sfzText;
-            sfzText << "// Instrument créé par Onde à partir des échantillons de « " << names[key] << " »\n";
+            sfzText << "// Instrument créé par Onde à partir des échantillons de « " << names[key] << " » (" << automapVersion << ")\n";
             sfzText << "<global> ampeg_release=" << (shortArt ? "0.12" : "0.35") << (shortArt ? " loop_mode=one_shot" : "") << "\n";
             for (auto& s : samples)
             {
@@ -160,8 +163,15 @@ namespace libraries
                 const size_t i = (size_t) std::distance (noteList.begin(), it);
                 const int lo = i == 0 ? s.note - 4 : (noteList[i - 1] + s.note) / 2 + 1;
                 const int hi = i + 1 == noteList.size() ? s.note + 4 : (s.note + noteList[i + 1]) / 2;
-                const size_t li = (size_t) std::distance (layers.begin(), std::find (layers.begin(), layers.end(), s.layer));
-                const int lovel = 1 + (int) (127 * li / layers.size()), hivel = (int) (127 * (li + 1) / layers.size());
+                // Vélocités : couches présentes pour CETTE note, sans trou de 1 à 127 (une note qui n'a qu'une couche
+                // répond à toutes les vélocités) ; les frontières suivent la place de chaque couche dans l'ensemble.
+                std::vector<int> here;
+                for (auto& o : samples) if (o.note == s.note && std::find (here.begin(), here.end(), o.layer) == here.end()) here.push_back (o.layer);
+                std::sort (here.begin(), here.end());
+                auto centre = [&] (int layer) { const auto gi = std::distance (layers.begin(), std::find (layers.begin(), layers.end(), layer)); return 127.0 * ((double) gi + 0.5) / (double) layers.size(); };
+                const size_t j = (size_t) std::distance (here.begin(), std::find (here.begin(), here.end(), s.layer));
+                const int lovel = j == 0 ? 1 : (int) std::floor ((centre (here[j - 1]) + centre (here[j])) * 0.5) + 1;
+                const int hivel = j + 1 == here.size() ? 127 : (int) std::floor ((centre (here[j]) + centre (here[j + 1])) * 0.5);
                 sfzText << "<region> sample=" << s.file.getRelativePathFrom (outDir).replaceCharacter ('\\', '/')
                         << " pitch_keycenter=" << (s.note + offset) << " lokey=" << juce::jlimit (0, 127, lo + offset) << " hikey=" << juce::jlimit (0, 127, hi + offset)
                         << " lovel=" << lovel << " hivel=" << hivel;
@@ -173,6 +183,20 @@ namespace libraries
         }
         if (progress) progress (1.0f);
         return made;
+    }
+
+    int refreshGeneratedInstruments()
+    {
+        int rebuilt = 0;
+        for (auto& info : catalog())
+        {
+            const auto dir = folderFor (info).getChildFile ("Instruments Onde");
+            if (! dir.isDirectory()) continue;
+            const auto first = dir.findChildFiles (juce::File::findFiles, false, "*.sfz");
+            if (! first.isEmpty() && first[0].loadFileAsString().upToFirstOccurrenceOf ("\n", false, false).contains (automapVersion)) continue;
+            if (buildInstrumentsFromSamples (folderFor (info), dir, nullptr) > 0) ++rebuilt;
+        }
+        return rebuilt;
     }
 
     juce::Result installFromZip (const Info& info, const juce::File& zipFile, std::function<void (float)> progress)

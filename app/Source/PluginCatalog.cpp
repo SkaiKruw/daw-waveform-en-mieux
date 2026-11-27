@@ -3,6 +3,7 @@
 #include "OndeSynth.h"
 #include "OndeFx2.h"
 #include "OndeSampler.h"
+#include "Pedalboard.h"
 #include "SandboxPlugin.h"
 
 PluginCatalog::PluginCatalog() : juce::Thread ("Analyse des plugins")
@@ -39,6 +40,7 @@ juce::Array<PluginEntry> PluginCatalog::getBuiltIns (bool instruments) const
         add ("Onde Comp (compresseur)", ondefx::CompPlugin::xmlTypeName, false);                         r.getReference (r.size() - 1).manufacturer = "Onde";
         add ("Onde Limiteur (plafond garanti)", ondefx::LimiterPlugin::xmlTypeName, false);              r.getReference (r.size() - 1).manufacturer = "Onde";
         add ("Onde Ampli (guitare, basse : clair, crunch, lead, moderne)", ondefx::AmpPlugin::xmlTypeName, false); r.getReference (r.size() - 1).manufacturer = "Onde";
+        add ("Onde Pédalier (16 pédales : overdrive, fuzz, chorus, délai, wah…, dans l'ordre voulu)", ondefx::PedalboardPlugin::xmlTypeName, false); r.getReference (r.size() - 1).manufacturer = "Onde";
         add ("Onde Saturation (douce, lampe, bande, fuzz)", ondefx::SaturationPlugin::xmlTypeName, false); r.getReference (r.size() - 1).manufacturer = "Onde";
         add ("Onde Écho (délai calé sur le tempo)", ondefx::EchoPlugin::xmlTypeName, false);              r.getReference (r.size() - 1).manufacturer = "Onde";
         add ("Onde Espace (réverbération)", ondefx::SpacePlugin::xmlTypeName, false);                    r.getReference (r.size() - 1).manufacturer = "Onde";

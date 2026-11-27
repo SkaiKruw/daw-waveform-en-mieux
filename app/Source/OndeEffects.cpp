@@ -2,6 +2,7 @@
 #include "OndeSynth.h"
 #include "OndeFx2.h"
 #include "OndeSampler.h"
+#include "Pedalboard.h"
 
 namespace ondefx
 {
@@ -726,5 +727,6 @@ namespace ondefx
         pm.createBuiltInType<ModulationPlugin>();
         pm.createBuiltInType<AmpPlugin>();
         pm.createBuiltInType<SamplerPlugin>();
+        pm.createBuiltInType<PedalboardPlugin>();
     }
 }

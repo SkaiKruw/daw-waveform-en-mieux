@@ -17,6 +17,7 @@ namespace chains
         constexpr const char* SPACE = "ondeSpace";
         constexpr const char* SYNTH = "ondeSynth";
         constexpr const char* AMP = "ondeAmp";
+        constexpr const char* PEDALS = "ondePedalboard";
 
         te::Plugin* findPlugin (te::AudioTrack& t, const char* type)
         {
@@ -74,7 +75,8 @@ namespace chains
                 { LIM, { { "input", 4 }, { "ceiling", -1 }, { "target", 1 } } } },
               { { "Présence", { { EQ, "b4gain", 0.25f } } }, { "Compression", { { COMP, "threshold", -0.3f } } }, { "Volume", { { LIM, "input", 0.5f } } } } },
             { "Guitares", "Guitare claire", "Ampli clair, nette et brillante, écho pointé et espace",
-              { { AMP, { { "model", 0 }, { "gain", 4 }, { "treble", 6.5f }, { "presence", 6 }, { "cab", 2 } } },
+              { { PEDALS, { { "s1type", 2 }, { "s1k1", 0.45f }, { "s1k2", 0.4f }, { "s1k3", 0.5f }, { "s1k4", 0.7f }, { "s2type", 8 }, { "s2k1", 0.3f }, { "s2k2", 0.5f }, { "s2k3", 0.35f } } },
+                { AMP, { { "model", 0 }, { "gain", 4 }, { "treble", 6.5f }, { "presence", 6 }, { "cab", 2 } } },
                 { EQ, { { "b0on", 1 }, { "b0freq", 80 }, { "b4freq", 3000 }, { "b4gain", 2 } } },
                 { COMP, { { "threshold", -18 }, { "ratio", 2.5f }, { "style", 1 } } },
                 { ECHO, { { "division", 5 }, { "feedback", 25 }, { "mix", 15 } } },
@@ -82,13 +84,15 @@ namespace chains
               { { "Brillance", { { EQ, "b5gain", 0.25f } } }, { "Écho", { { ECHO, "mix", 0.4f } } }, { "Espace", { { SPACE, "mix", 0.5f } } },
                 { "Compression", { { COMP, "threshold", -0.3f } } } } },
             { "Guitares", "Guitare saturée", "Ampli à lampes poussé, médiums creusés, aigus adoucis",
-              { { AMP, { { "model", 2 }, { "gate", -70 }, { "boost", 2 }, { "gain", 6.5f }, { "mid", 5.5f }, { "cab", 3 }, { "mic", 0.35f } } },
+              { { PEDALS, { { "s1type", 3 }, { "s1on", 0 }, { "s1k1", 0.2f }, { "s1k2", 0.55f }, { "s1k3", 0.7f }, { "s2type", 12 }, { "s2k1", 0.35f }, { "s2k2", 0.25f }, { "s2k3", 0.15f } } },
+                { AMP, { { "model", 2 }, { "gate", -70 }, { "boost", 2 }, { "gain", 6.5f }, { "mid", 5.5f }, { "cab", 3 }, { "mic", 0.35f } } },
                 { EQ, { { "b0on", 1 }, { "b0freq", 90 }, { "b2freq", 400 }, { "b2gain", -3 }, { "b4freq", 2500 }, { "b4gain", 2 }, { "b6on", 1 }, { "b6freq", 9000 } } },
                 { SPACE, { { "size", 0.4f }, { "decay", 1.2f }, { "mix", 10 } } } },
               { { "Gain", { { AMP, "gain", 0.4f } } }, { "Médiums", { { AMP, "mid", 0.4f } } }, { "Brillance", { { EQ, "b4gain", 0.25f } } },
                 { "Espace", { { SPACE, "mix", 0.4f } } } } },
             { "Guitares", "Guitare métal", "Ampli moderne très saturé, boost qui resserre le grave, porte de bruit",
-              { { AMP, { { "model", 3 }, { "gate", -58 }, { "boost", 7 }, { "gain", 6 }, { "bass", 5.5f }, { "mid", 4.5f }, { "treble", 6 }, { "presence", 6.5f }, { "cab", 3 }, { "mic", 0.25f } } },
+              { { PEDALS, { { "s1type", 1 }, { "s1k1", 0.45f }, { "s1k2", 0.12f }, { "s2type", 3 }, { "s2k1", 0.0f }, { "s2k2", 0.6f }, { "s2k3", 0.75f } } },
+                { AMP, { { "model", 3 }, { "gate", -58 }, { "boost", 7 }, { "gain", 6 }, { "bass", 5.5f }, { "mid", 4.5f }, { "treble", 6 }, { "presence", 6.5f }, { "cab", 3 }, { "mic", 0.25f } } },
                 { EQ, { { "b0on", 1 }, { "b0freq", 90 }, { "b6on", 1 }, { "b6freq", 9000 } } },
                 { SPACE, { { "size", 0.35f }, { "decay", 0.9f }, { "mix", 8 } } } },
               { { "Gain", { { AMP, "gain", 0.4f } } }, { "Serrage", { { AMP, "boost", 0.4f } } }, { "Présence", { { AMP, "presence", 0.4f } } },

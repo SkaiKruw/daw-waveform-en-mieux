@@ -5,6 +5,18 @@
 
 namespace ondefx { struct SynthPreset; class SynthPlugin; }
 
+// Instruments réels : sons enregistrés (bibliothèques libres, Onde Échantillonneur) présentés comme des instruments.
+namespace realinstruments
+{
+    struct Entry { const char* name; const char* family; const char* library; const char* file; float roomSize, roomMix; const char* description; };
+    const std::vector<Entry>& catalog();
+    juce::File fileFor (const Entry&);
+    bool available (const Entry&);                       // bibliothèque installée ?
+    const Entry* find (const juce::String& name);
+    // Pose l'instrument sur la piste (ou une nouvelle piste), avec sa salle (Onde Espace). Annulable.
+    te::AudioTrack* applyToTrack (EditContext&, te::AudioTrack* track, const Entry&);
+}
+
 class LibraryPanel  : public juce::Component, private juce::ListBoxModel, private juce::Timer
 {
 public:
@@ -19,10 +31,11 @@ public:
     static te::AudioTrack* applyToTrack (EditContext&, te::AudioTrack* track, const ondefx::SynthPreset&);
     void selectCategory (int);
     void choosePreset (int row, bool newTrack);
-    int numPresetsShown() const    { return shown.size(); }
+    int numPresetsShown() const    { return isReal() ? shownReal.size() : shown.size(); }
+    bool isReal() const            { return category == 0; }
 
 private:
-    int getNumRows() override      { return shown.size(); }
+    int getNumRows() override      { return numPresetsShown(); }
     void paintListBoxItem (int row, juce::Graphics&, int w, int h, bool selected) override;
     void listBoxItemClicked (int row, const juce::MouseEvent&) override       { choosePreset (row, false); }
     void listBoxItemDoubleClicked (int row, const juce::MouseEvent&) override { choosePreset (row, true); }
@@ -34,6 +47,8 @@ private:
     juce::StringArray categories;
     int category = 0;
     juce::Array<const ondefx::SynthPreset*> shown;
+    juce::Array<const realinstruments::Entry*> shownReal;
+    te::Plugin::Ptr waitingSampler;                       // aperçu dès que les échantillons sont chargés
     juce::ListBox list;
     juce::TextButton newTrackButton, previewButton { juce::String::fromUTF8 ("Écouter") };
     juce::Label status;
