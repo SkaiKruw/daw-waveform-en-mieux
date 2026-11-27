@@ -126,7 +126,7 @@ namespace libraries
         int made = 0, index = 0;
         for (auto& [key, samples] : groups)
         {
-            if (progress) progress ((float) index++ / (float) juce::jmax<size_t> (1, groups.size()));
+            if (progress) progress ((float) index++ / (float) std::max<size_t> (1, groups.size()));
             std::set<int> notes;
             for (auto& s : samples) notes.insert (s.note);
             if (notes.size() < 3) continue;                                   // pas un instrument joué sur une tessiture
