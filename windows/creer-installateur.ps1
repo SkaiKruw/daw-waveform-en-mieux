@@ -37,7 +37,7 @@ $vs = if (Test-Path $vswhere) { & $vswhere -latest -products * -property install
 $crt = Get-ChildItem (Join-Path $vs 'VC\Redist\MSVC') -Directory -ErrorAction SilentlyContinue |
        Where-Object { $_.Name -match '^\d+\.\d+\.\d+$' } | Sort-Object { [version] $_.Name } -Descending |
        ForEach-Object { Get-ChildItem $_.FullName -Recurse -Directory -Filter 'Microsoft.VC14*.CRT' -ErrorAction SilentlyContinue |
-                        Where-Object { $_.FullName -match '\\x64\\' -and $_.FullName -notmatch 'onecore|Debug' } } |
+                        Where-Object { $_.FullName -match '\\x64\\' -and $_.FullName -notmatch 'onecore|Debug|spectre' } } |
        Select-Object -First 1
 if (-not $crt) { throw 'Runtime Visual C++ (Microsoft.VC14x.CRT, x64) introuvable dans Visual Studio.' }
 Copy-Item (Join-Path $crt.FullName '*.dll') $app
