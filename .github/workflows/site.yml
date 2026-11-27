@@ -1,34 +1,38 @@
 # Page de téléchargement d'Onde (dossier site/) publiée sur GitHub Pages à chaque modification.
-# À activer une fois : Settings › Pages › Source : « GitHub Actions ».
+# Réglage du dépôt : Settings › Pages › Source : « GitHub Actions ».
 name: Page de téléchargement
 
 on:
   workflow_dispatch:
   push:
-    branches: [ main, master ]
+    branches: [ main ]
     paths: [ 'site/**', '.github/workflows/site.yml' ]
 
 permissions:
   contents: read
-  actions: read
   pages: write
   id-token: write
 
 concurrency:
   group: pages
-  cancel-in-progress: true
+  cancel-in-progress: false
 
 jobs:
-  publier:
+  preparer:
     runs-on: ubuntu-latest
-    environment:
-      name: github-pages
-      url: ${{ steps.deploiement.outputs.page_url }}
     steps:
       - uses: actions/checkout@v7
       - uses: actions/configure-pages@v6
       - uses: actions/upload-pages-artifact@v5
         with:
           path: site
+
+  publier:
+    needs: preparer
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deploiement.outputs.page_url }}
+    steps:
       - id: deploiement
         uses: actions/deploy-pages@v5
