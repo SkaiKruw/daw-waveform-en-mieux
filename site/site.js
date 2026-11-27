@@ -2,7 +2,7 @@
 // Sans réseau ou sans version publiée, les boutons mènent à la page des versions (rien ne casse).
 (function () {
   "use strict";
-  var REPO = "SkaiKruw/daw-waveform-en-mieux";
+  var REPO = "SkaiKruw/onde";
   var ALLOWED = "https://github.com/" + REPO + "/releases/download/";   // seuls liens de téléchargement acceptés
 
   function $(id) { return document.getElementById(id); }

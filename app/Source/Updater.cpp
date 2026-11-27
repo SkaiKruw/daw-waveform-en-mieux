@@ -6,7 +6,7 @@ namespace updates
 {
     juce::String currentVersion() { return AboutPanel::version; }
 
-    juce::String repository() { return prefs::file().getValue ("updateRepo", "SkaiKruw/daw-waveform-en-mieux"); }
+    juce::String repository() { return prefs::file().getValue ("updateRepo", "SkaiKruw/onde"); }
 
     bool isNewer (const juce::String& candidate, const juce::String& current)
     {
