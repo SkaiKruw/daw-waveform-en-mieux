@@ -13,6 +13,10 @@ if(WIN32)
         # Exécutables autonomes : pas de DLL MinGW à fournir à côté.
         target_link_options(onde-plugin-worker PRIVATE -static)
     endif()
+elseif(APPLE)
+    # macOS : pas de bibliothèque rt (shm_open et clock_gettime sont dans la libc).
+    target_link_libraries(onde_sandbox PUBLIC pthread)
+    target_link_libraries(onde-plugin-worker PRIVATE pthread)
 else()
     target_link_libraries(onde_sandbox PUBLIC pthread rt)
     target_link_libraries(onde-plugin-worker PRIVATE pthread rt)
