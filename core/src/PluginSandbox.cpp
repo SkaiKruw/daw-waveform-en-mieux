@@ -111,8 +111,8 @@ namespace onde
         CloseHandle (requestEvent);  requestEvent = nullptr;
         CloseHandle (responseEvent); responseEvent = nullptr;
        #else
-        sem_destroy (&block->request);
-        sem_destroy (&block->response);
+        shmSemDestroy (&block->request);
+        shmSemDestroy (&block->response);
        #endif
         platform::closeSharedMemory (block, sizeof (SharedBlock), shmHandle, shmName, true);
         block = nullptr;
@@ -125,8 +125,8 @@ namespace onde
         ResetEvent (requestEvent);
         ResetEvent (responseEvent);
        #else
-        sem_init (&block->request, 1, 0);
-        sem_init (&block->response, 1, 0);
+        shmSemInit (&block->request);
+        shmSemInit (&block->response);
        #endif
     }
 
@@ -137,7 +137,7 @@ namespace onde
            #ifdef _WIN32
             (void) b; SetEvent ((HANDLE) reqEvent);
            #else
-            (void) reqEvent; sem_post (&b->request);
+            (void) reqEvent; shmSemPost (&b->request);
            #endif
         }
 
@@ -153,7 +153,7 @@ namespace onde
             const timespec deadline = deadlineFromNow (seconds);
             while (true)
             {
-                if (sem_timedwait (&b->response, &deadline) == 0) return true;
+                if (shmSemTimedWait (&b->response, &deadline) == 0) return true;
                 if (errno != EINTR) return false;
             }
            #endif
@@ -164,7 +164,7 @@ namespace onde
            #ifdef _WIN32
             (void) b; ResetEvent ((HANDLE) respEvent);
            #else
-            (void) respEvent; while (sem_trywait (&b->response) == 0) {}
+            (void) respEvent; while (shmSemTryWait (&b->response) == 0) {}
            #endif
         }
     }
@@ -304,7 +304,7 @@ namespace onde
             if (supervisor.joinable())
                 supervisor.join();
            #ifndef _WIN32
-            if (block != nullptr) { sem_destroy (&block->request); sem_destroy (&block->response); }
+            if (block != nullptr) { shmSemDestroy (&block->request); shmSemDestroy (&block->response); }
            #endif
             restarts++;
             lastSignal.store (0);

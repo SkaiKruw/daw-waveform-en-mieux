@@ -107,7 +107,7 @@ namespace onde
         ts.tv_nsec += (long) (timeoutMs % 1000) * 1000000L;
         ts.tv_sec  += timeoutMs / 1000 + ts.tv_nsec / 1000000000L;
         ts.tv_nsec %= 1000000000L;
-        if (sem_timedwait (&shared->request, &ts) != 0)
+        if (shmSemTimedWait (&shared->request, &ts) != 0)
             return getppid() != parentPid ? Wait::hostGone : Wait::timeout;
        #endif
         return shared->shutdown.load() ? Wait::shutdown : Wait::request;
@@ -119,7 +119,7 @@ namespace onde
        #ifdef _WIN32
         SetEvent (response);
        #else
-        sem_post (&shared->response);
+        shmSemPost (&shared->response);
        #endif
     }
 

@@ -3,8 +3,53 @@
 #include <atomic>
 #include <cstdint>
 #ifndef _WIN32
+ #include <cerrno>
+ #include <ctime>
  #include <semaphore.h>
 #endif
+
+namespace onde
+{
+   #if defined(__APPLE__)
+    // macOS n'a ni sémaphores anonymes partagés entre processus (sem_init renvoie ENOSYS) ni sem_timedwait :
+    // un compteur atomique dans la mémoire partagée, attente active brève puis sommeil par pas de 20 µs.
+    struct ShmSemaphore { std::atomic<int32_t> count; };
+    static_assert (std::atomic<int32_t>::is_always_lock_free, "compteur partagé entre processus");
+    inline int shmSemInit (ShmSemaphore* s)    { s->count.store (0, std::memory_order_release); return 0; }
+    inline int shmSemDestroy (ShmSemaphore*)   { return 0; }
+    inline int shmSemPost (ShmSemaphore* s)    { s->count.fetch_add (1, std::memory_order_release); return 0; }
+    inline int shmSemTryWait (ShmSemaphore* s)
+    {
+        int32_t c = s->count.load (std::memory_order_acquire);
+        while (c > 0)
+            if (s->count.compare_exchange_weak (c, c - 1, std::memory_order_acq_rel)) return 0;
+        errno = EAGAIN;
+        return -1;
+    }
+    // Échéance en CLOCK_REALTIME, comme sem_timedwait.
+    inline int shmSemTimedWait (ShmSemaphore* s, const timespec* deadline)
+    {
+        for (int i = 0;; ++i)
+        {
+            if (shmSemTryWait (s) == 0) return 0;
+            if (i < 200) continue;
+            timespec now {};
+            clock_gettime (CLOCK_REALTIME, &now);
+            if (now.tv_sec > deadline->tv_sec || (now.tv_sec == deadline->tv_sec && now.tv_nsec >= deadline->tv_nsec))
+            { errno = ETIMEDOUT; return -1; }
+            const timespec pause { 0, i < 20000 ? 20000L : 200000L };
+            nanosleep (&pause, nullptr);
+        }
+    }
+   #elif !defined(_WIN32)
+    using ShmSemaphore = sem_t;
+    inline int shmSemInit (ShmSemaphore* s)    { return sem_init (s, 1, 0); }
+    inline int shmSemDestroy (ShmSemaphore* s) { return sem_destroy (s); }
+    inline int shmSemPost (ShmSemaphore* s)    { return sem_post (s); }
+    inline int shmSemTryWait (ShmSemaphore* s) { return sem_trywait (s); }
+    inline int shmSemTimedWait (ShmSemaphore* s, const timespec* deadline) { return sem_timedwait (s, deadline); }
+   #endif
+}
 
 namespace onde
 {
@@ -56,8 +101,8 @@ namespace onde
         uint32_t maxFrames;
 
        #ifndef _WIN32
-        sem_t request;   // l'hôte poste : « un bloc est prêt »
-        sem_t response;  // le worker poste : « bloc traité »
+        ShmSemaphore request;   // l'hôte poste : « un bloc est prêt »
+        ShmSemaphore response;  // le worker poste : « bloc traité »
        #endif            // Windows : deux événements nommés, dérivés du nom de la mémoire partagée
 
         std::atomic<uint64_t> requestSeq;
